@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 
 const SYSTEM_PROMPT = `You are an AI Stock Market Trading Agent responsible for analyzing financial markets and making buy, sell, or hold decisions for stocks.
 
@@ -29,7 +29,7 @@ IMPORTANT: You will be given the LIVE current price. Base ALL price targets on i
 - Stop loss = 5-8% below entry for BUY
 - Target price = realistic upside: 10-25% medium-term, 5-15% short-term
 
-OUTPUT - return ONLY a raw JSON object. Absolutely no markdown, no backticks, no text before or after the JSON:
+OUTPUT - return ONLY a raw JSON object. No markdown, no backticks, no text before or after:
 {
   "ticker": "SYMBOL",
   "companyName": "Full Company Name",
@@ -52,8 +52,7 @@ OUTPUT - return ONLY a raw JSON object. Absolutely no markdown, no backticks, no
   "timeHorizon": "Medium-term (months)"
 }`
 
-const TICKERS = ['AAPL','NVDA','MSFT','GOOGL','AMZN','TSLA','META','JPM','JNJ','XOM','V','UNH','NFLX','AMD','WMT']
-const LS_KEY = 'algo_trade_finnhub_key'
+const POPULAR = ['AAPL','NVDA','MSFT','GOOGL','AMZN','TSLA','META','JPM','JNJ','XOM','V','UNH','NFLX','AMD','WMT']
 
 const DC = {
   BUY:  { bg:'rgba(0,255,144,0.08)', border:'#00ff90', text:'#00ff90', glow:'0 0 28px rgba(0,255,144,0.27)' },
@@ -63,44 +62,30 @@ const DC = {
 const RC = { Low:'#00ff90', Medium:'#ffd700', High:'#ff4060' }
 
 function fmt(n) {
-  if (n == null || n === undefined || isNaN(Number(n))) return '—'
-  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (n == null || isNaN(Number(n))) return '—'
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })
 }
-
 function pctDiff(a, b) {
   if (!b || !a || isNaN(a) || isNaN(b)) return null
   return (((a - b) / b) * 100).toFixed(2)
 }
 
-function loadKey() {
-  try { return localStorage.getItem(LS_KEY) || '' } catch { return '' }
-}
-function persistKey(k) {
-  try { if (k) localStorage.setItem(LS_KEY, k); else localStorage.removeItem(LS_KEY) } catch {}
-}
-
-async function fetchFinnhub(symbol, apiKey) {
-  const qRes = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`)
-  if (!qRes.ok) throw new Error(`HTTP ${qRes.status}`)
-  const q = await qRes.json()
-  if (!q || !q.c || q.c === 0) throw new Error('No data')
-  let name = symbol
-  try {
-    const pRes = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`)
-    if (pRes.ok) { const p = await pRes.json(); if (p && p.name) name = p.name }
-  } catch (_) {}
-  return {
-    price:     parseFloat(q.c.toFixed(2)),
-    open:      parseFloat(q.o.toFixed(2)),
-    high:      parseFloat(q.h.toFixed(2)),
-    low:       parseFloat(q.l.toFixed(2)),
-    prevClose: parseFloat(q.pc.toFixed(2)),
-    change:    parseFloat((q.c - q.pc).toFixed(2)),
-    changePct: parseFloat(((q.c - q.pc) / q.pc * 100).toFixed(2)),
-    name,
-  }
+// ── API calls (server-side proxied) ──────────────────────────────────────────
+async function fetchPrice(symbol) {
+  const res = await fetch(`/api/price?symbol=${encodeURIComponent(symbol)}`)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || `Price fetch failed`)
+  return data
 }
 
+async function searchTickers(query) {
+  const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
+  const data = await res.json()
+  if (!res.ok) return []
+  return data.results || []
+}
+
+// ── Small components ──────────────────────────────────────────────────────────
 function Dot({ color = '#00ff90', pulse = false }) {
   return (
     <span style={{
@@ -125,7 +110,7 @@ function StepLoader({ ticker }) {
   const steps = ['FETCHING LIVE PRICE','SCANNING SIGNALS','EVALUATING FUNDAMENTALS','COMPUTING RISK','GENERATING RECOMMENDATION']
   const [step, setStep] = useState(0)
   useEffect(() => {
-    const t = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 800)
+    const t = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 850)
     return () => clearInterval(t)
   }, [])
   return (
@@ -149,12 +134,123 @@ function StepLoader({ ticker }) {
   )
 }
 
+// ── Autocomplete search box ───────────────────────────────────────────────────
+function SearchBox({ onSelect, disabled }) {
+  const [query,       setQuery]       = useState('')
+  const [suggestions, setSuggestions] = useState([])
+  const [searching,   setSearching]   = useState(false)
+  const [focused,     setFocused]     = useState(false)
+  const [highlight,   setHighlight]   = useState(-1)
+  const debounceRef = useRef(null)
+  const inputRef    = useRef(null)
+  const dropRef     = useRef(null)
+
+  // debounced search after 3 chars
+  useEffect(() => {
+    if (query.length < 3) { setSuggestions([]); return }
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      const results = await searchTickers(query)
+      setSuggestions(results)
+      setSearching(false)
+      setHighlight(-1)
+    }, 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [query])
+
+  // close dropdown on outside click
+  useEffect(() => {
+    function handler(e) {
+      if (!dropRef.current?.contains(e.target) && !inputRef.current?.contains(e.target)) {
+        setSuggestions([])
+        setFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function pick(item) {
+    setQuery(item.symbol)
+    setSuggestions([])
+    setFocused(false)
+    onSelect(item.symbol)
+    inputRef.current?.blur()
+  }
+
+  function onKeyDown(e) {
+    if (!suggestions.length) {
+      if (e.key === 'Enter' && query.trim()) onSelect(query.trim().toUpperCase())
+      return
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(h + 1, suggestions.length - 1)) }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); setHighlight(h => Math.max(h - 1, 0)) }
+    if (e.key === 'Enter')     { e.preventDefault(); if (highlight >= 0) pick(suggestions[highlight]); else onSelect(query.trim().toUpperCase()) }
+    if (e.key === 'Escape')    { setSuggestions([]); setFocused(false) }
+  }
+
+  const showDrop = focused && (suggestions.length > 0 || (searching && query.length >= 3))
+
+  return (
+    <div style={{ position:'relative', flex:1 }}>
+      <div style={{ position:'relative' }}>
+        <input
+          ref={inputRef}
+          value={query}
+          disabled={disabled}
+          onChange={e => setQuery(e.target.value.toUpperCase())}
+          onFocus={() => setFocused(true)}
+          onKeyDown={onKeyDown}
+          placeholder="SEARCH TICKER OR COMPANY NAME — e.g. TSLA, Apple, Nvidia..."
+          style={{
+            width:'100%', background:'#020802', border:'1px solid #1a2a1a', borderRadius:4,
+            padding:'10px 40px 10px 13px', color:'#00ff90', fontSize:12, letterSpacing:'1px',
+            fontFamily:"'Space Mono',monospace", transition:'border-color .15s',
+          }}
+        />
+        {/* Search icon / spinner */}
+        <div style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', fontSize:14, color:'#2a4a2a' }}>
+          {searching ? '⟳' : '⌕'}
+        </div>
+      </div>
+
+      {/* Dropdown */}
+      {showDrop && (
+        <div ref={dropRef} style={{
+          position:'absolute', top:'calc(100% + 4px)', left:0, right:0, zIndex:100,
+          background:'#060e06', border:'1px solid #1e2a1e', borderRadius:6,
+          overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.6)',
+        }}>
+          {searching && (
+            <div style={{ padding:'10px 14px', fontSize:10, color:'#2a4a2a', letterSpacing:'2px' }}>SEARCHING...</div>
+          )}
+          {!searching && suggestions.map((s, i) => (
+            <div key={s.symbol}
+              onMouseDown={() => pick(s)}
+              onMouseEnter={() => setHighlight(i)}
+              style={{
+                padding:'10px 14px', cursor:'pointer', display:'flex', alignItems:'center', gap:12,
+                background: i === highlight ? 'rgba(0,255,144,0.07)' : 'transparent',
+                borderBottom: i < suggestions.length - 1 ? '1px solid #0a1a0a' : 'none',
+                transition:'background .1s',
+              }}>
+              <span style={{ fontSize:12, fontWeight:700, color:'#00ff90', fontFamily:"'Space Mono',monospace", minWidth:60 }}>{s.symbol}</span>
+              <span style={{ fontSize:11, color:'#4a6a4a', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
+            </div>
+          ))}
+          {!searching && query.length >= 3 && suggestions.length === 0 && (
+            <div style={{ padding:'10px 14px', fontSize:10, color:'#2a4a2a', letterSpacing:'1px' }}>No results for "{query}"</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [apiKey,      setApiKey]      = useState(loadKey)
-  const [keySaved,    setKeySaved]    = useState(() => !!loadKey())
-  const [keyInput,    setKeyInput]    = useState('')
-  const [ticker,      setTicker]      = useState('')
-  const [custom,      setCustom]      = useState('')
+  const [sym,         setSym]         = useState('')
   const [context,     setContext]     = useState('')
   const [liveData,    setLiveData]    = useState(null)
   const [liveLoading, setLiveLoading] = useState(false)
@@ -162,49 +258,38 @@ export default function App() {
   const [loading,     setLoading]     = useState(false)
   const [result,      setResult]      = useState(null)
   const [error,       setError]       = useState(null)
-  const [rawResponse, setRawResponse] = useState(null)
   const [history,     setHistory]     = useState([])
   const [time,        setTime]        = useState(new Date())
-
-  const sym = (custom || ticker).toUpperCase().trim()
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
+  // fetch live price whenever sym changes
   useEffect(() => {
-    if (!sym || !keySaved || !apiKey) { setLiveData(null); return }
+    if (!sym) { setLiveData(null); setLiveError(null); return }
     let cancelled = false
     setLiveLoading(true); setLiveError(null); setLiveData(null)
-    fetchFinnhub(sym, apiKey)
-      .then(d => { if (!cancelled) { setLiveData(d); setLiveLoading(false) } })
-      .catch(e => {
-        if (!cancelled) {
-          setLiveError(
-            e.message.includes('401') || e.message.includes('403') ? 'Invalid API key.' :
-            e.message === 'No data' ? `No data for "${sym}". Check the ticker.` :
-            `Price fetch failed: ${e.message}`
-          )
-          setLiveLoading(false)
-        }
-      })
+    fetchPrice(sym)
+      .then(d  => { if (!cancelled) { setLiveData(d);  setLiveLoading(false) } })
+      .catch(e  => { if (!cancelled) { setLiveError(e.message); setLiveLoading(false) } })
     return () => { cancelled = true }
-  }, [sym, apiKey, keySaved])
+  }, [sym])
 
-  function saveKey(k) {
-    const v = k.trim()
-    setApiKey(v); setKeySaved(!!v); persistKey(v)
-    setLiveData(null); setLiveError(null)
+  function selectSym(s) {
+    const v = s.toUpperCase().trim()
+    setSym(v); setResult(null); setError(null)
   }
 
   async function analyze() {
     if (!sym) return
-    setLoading(true); setError(null); setResult(null); setRawResponse(null)
+    setLoading(true); setError(null); setResult(null)
 
+    // refresh price right before analysis
     let live = liveData
-    if (!live && keySaved && apiKey) {
-      try { live = await fetchFinnhub(sym, apiKey); setLiveData(live) } catch (_) {}
+    if (!live) {
+      try { live = await fetchPrice(sym); setLiveData(live) } catch (_) {}
     }
 
     const priceBlock = live
@@ -233,27 +318,23 @@ USE $${live.price} as the EXACT basis for all price calculations.`
       }
 
       const data = await res.json()
-      const txt = (data.text || '').trim()
-      setRawResponse(txt)
-
-      // strip any accidental markdown fences then extract JSON
+      const txt  = (data.text || '').trim()
       const stripped = txt.replace(/```json/gi, '').replace(/```/g, '').trim()
       const match = stripped.match(/\{[\s\S]*\}/)
-      if (!match) throw new Error('No JSON found in response')
+      if (!match) throw new Error('No JSON in response. Raw: ' + txt.slice(0, 120))
       const parsed = JSON.parse(match[0])
-
       const rec = { ...parsed, livePrice: live?.price ?? null, ts: new Date().toISOString() }
       setResult(rec)
       setHistory(h => [rec, ...h.slice(0, 9)])
     } catch (e) {
-      setError('Analysis failed: ' + e.message + (rawResponse ? ` | Raw: ${rawResponse.slice(0, 100)}` : ''))
+      setError('Analysis failed: ' + e.message)
     }
     setLoading(false)
   }
 
   const dc       = result ? (DC[result.decision] || DC.HOLD) : null
   const upside   = result?.livePrice && result?.targetPrice ? pctDiff(result.targetPrice, result.livePrice) : null
-  const downside = result?.livePrice && result?.stopLoss    ? pctDiff(result.stopLoss,    result.livePrice) : null
+  const downside = result?.livePrice && result?.stopLoss    ? pctDiff(result.stopLoss, result.livePrice)    : null
   const rr       = upside && downside && parseFloat(downside) !== 0
     ? (Math.abs(parseFloat(upside)) / Math.abs(parseFloat(downside))).toFixed(2) : null
 
@@ -269,17 +350,21 @@ USE $${live.price} as the EXACT basis for all price calculations.`
         input,button { font-family:'Space Mono',monospace; }
         input::placeholder { color:#1a2a1a; }
         input:focus { outline:none; border-color:#00ff90 !important; }
-        .chip:hover { border-color:rgba(0,255,144,0.5)!important; color:#00ff90!important; cursor:pointer; }
+        .chip { transition:all .15s; cursor:pointer; }
+        .chip:hover { border-color:rgba(0,255,144,0.5)!important; color:#00ff90!important; }
+        .abtn { transition:all .2s; }
         .abtn:hover:not(:disabled) { background:#00ff90!important; color:#020802!important; cursor:pointer; }
         .abtn:disabled { opacity:.3; cursor:not-allowed; }
-        .hbadge:hover { background:rgba(0,255,144,0.08)!important; cursor:pointer; }
+        .hbadge { transition:background .15s; cursor:pointer; }
+        .hbadge:hover { background:rgba(0,255,144,0.08)!important; }
       `}</style>
 
+      {/* BG grid */}
       <div style={{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none',
         backgroundImage:'linear-gradient(rgba(0,255,144,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,144,.018) 1px,transparent 1px)',
         backgroundSize:'44px 44px' }} />
 
-      {/* HEADER */}
+      {/* ── HEADER ── */}
       <div style={{ borderBottom:'1px solid #0a1a0a', padding:'13px 28px', display:'flex', alignItems:'center',
         justifyContent:'space-between', position:'sticky', top:0, zIndex:20,
         background:'rgba(2,8,2,0.96)', backdropFilter:'blur(6px)' }}>
@@ -295,113 +380,93 @@ USE $${live.price} as the EXACT basis for all price calculations.`
 
       <div style={{ position:'relative', zIndex:10, padding:'20px 24px', maxWidth:1160, margin:'0 auto' }}>
 
-        {/* API KEY */}
-        <div style={{ background:'#060e06', border:'1px solid #0a2a1a', borderRadius:8, padding:'16px 20px', marginBottom:14 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom: keySaved ? 0 : 12 }}>
-            <Dot color={keySaved ? '#00ff90' : '#ffd700'} pulse={!keySaved} />
-            <span style={{ fontSize:10, color: keySaved ? '#00ff90' : '#ffd700', letterSpacing:'2px' }}>
-              {keySaved ? 'FINNHUB API · CONNECTED · KEY SAVED IN BROWSER' : 'FINNHUB API KEY REQUIRED FOR LIVE PRICES'}
-            </span>
-            {keySaved && (
-              <span style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10, fontSize:10, color:'#2a4a2a' }}>
-                {'•'.repeat(12)}{apiKey.slice(-4)}
-                <button onClick={() => { saveKey(''); setKeyInput('') }}
-                  style={{ background:'transparent', border:'1px solid #1e2a1e', color:'#2a4a2a', padding:'2px 10px', borderRadius:3, fontSize:9, cursor:'pointer' }}>
-                  CHANGE
-                </button>
-              </span>
-            )}
-          </div>
-          {!keySaved && (
-            <>
-              <div style={{ fontSize:11, color:'#3a5a3a', lineHeight:1.7, marginBottom:10 }}>
-                Get a <strong style={{ color:'#00ff90' }}>free</strong> key at{' '}
-                <a href="https://finnhub.io/register" target="_blank" rel="noreferrer"
-                  style={{ color:'#00ff90', textDecoration:'none', borderBottom:'1px solid rgba(0,255,144,.3)' }}>
-                  finnhub.io/register
-                </a>
-                {' '}— Sign up → copy key → paste below.{' '}
-                <strong style={{ color:'#00ff90' }}>Saved permanently</strong> so you never enter it again.
-              </div>
-              <div style={{ display:'flex', gap:8 }}>
-                <input value={keyInput} onChange={e => setKeyInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && saveKey(keyInput)}
-                  placeholder="Paste Finnhub API key here..."
-                  style={{ flex:1, background:'#020802', border:'1px solid #1e3a1e', borderRadius:4, padding:'9px 14px', color:'#00ff90', fontSize:12, letterSpacing:'1px' }} />
-                <button onClick={() => saveKey(keyInput)}
-                  style={{ background:'transparent', border:'1px solid #00ff90', color:'#00ff90', padding:'9px 20px', borderRadius:4, fontSize:11, fontWeight:700, letterSpacing:'1px', cursor:'pointer' }}>
-                  SAVE PERMANENTLY
-                </button>
-              </div>
-              <div style={{ fontSize:10, color:'#1e3a1e', marginTop:8 }}>Free · 60 calls/min · No credit card · Stored in localStorage</div>
-            </>
-          )}
-        </div>
-
-        {/* TICKER INPUT */}
-        <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:'16px 20px', marginBottom:14 }}>
+        {/* ── TERMINAL ── */}
+        <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:'18px 20px', marginBottom:14 }}>
           <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ STOCK ANALYSIS TERMINAL</div>
-          <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:12 }}>
-            {TICKERS.map(t => (
+
+          {/* Popular chips */}
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:14 }}>
+            {POPULAR.map(t => (
               <button key={t} className="chip"
-                onClick={() => { setTicker(t); setCustom(''); setResult(null); setError(null) }}
+                onClick={() => selectSym(t)}
                 style={{
-                  background: ticker === t && !custom ? 'rgba(0,255,144,.07)' : 'transparent',
-                  border: `1px solid ${ticker === t && !custom ? '#00ff90' : '#1a2a1a'}`,
-                  color: ticker === t && !custom ? '#00ff90' : '#3a5a3a',
+                  background: sym === t ? 'rgba(0,255,144,.07)' : 'transparent',
+                  border: `1px solid ${sym === t ? '#00ff90' : '#1a2a1a'}`,
+                  color: sym === t ? '#00ff90' : '#3a5a3a',
                   padding:'3px 10px', borderRadius:3, fontSize:11,
-                  fontWeight: ticker === t && !custom ? 700 : 400, letterSpacing:'1px',
-                  transition:'all .15s',
+                  fontWeight: sym === t ? 700 : 400, letterSpacing:'1px',
                 }}>{t}</button>
             ))}
           </div>
+
+          {/* Search + Analyze */}
           <div style={{ display:'flex', gap:8, alignItems:'flex-start' }}>
-            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:7 }}>
-              <input value={custom}
-                onChange={e => { setCustom(e.target.value.toUpperCase()); setTicker(''); setResult(null); setError(null) }}
-                onKeyDown={e => e.key === 'Enter' && analyze()}
-                placeholder="OR TYPE ANY TICKER — PLTR, TSM, HOOD, COIN..."
-                style={{ background:'#020802', border:'1px solid #1a2a1a', borderRadius:4, padding:'9px 13px', color:'#00ff90', fontSize:12, letterSpacing:'2px', width:'100%', transition:'border-color .15s' }} />
+            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
+              <SearchBox onSelect={selectSym} disabled={loading} />
               <input value={context} onChange={e => setContext(e.target.value)}
-                placeholder="Optional context — e.g. earnings beat, Fed held rates, sector rotation into tech..."
-                style={{ background:'#020802', border:'1px solid #0a1a0a', borderRadius:4, padding:'8px 13px', color:'#4a6a4a', fontSize:11, width:'100%' }} />
+                placeholder="Optional context — e.g. earnings beat, Fed held rates, tariff news..."
+                style={{ background:'#020802', border:'1px solid #0a1a0a', borderRadius:4,
+                  padding:'8px 13px', color:'#4a6a4a', fontSize:11, width:'100%' }} />
             </div>
             <button className="abtn" onClick={analyze} disabled={loading || !sym}
-              style={{ background:'transparent', border:'1px solid #00ff90', color:'#00ff90', padding:'9px 24px', borderRadius:4, fontSize:12, fontWeight:700, letterSpacing:'2px', transition:'all .2s' }}>
+              style={{ background:'transparent', border:'1px solid #00ff90', color:'#00ff90',
+                padding:'10px 24px', borderRadius:4, fontSize:12, fontWeight:700, letterSpacing:'2px' }}>
               {loading ? '···' : 'ANALYZE ▸'}
             </button>
           </div>
+
+          {/* Selected symbol badge */}
+          {sym && (
+            <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:8 }}>
+              <span style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px' }}>SELECTED:</span>
+              <span style={{ fontSize:12, fontWeight:700, color:'#00ff90', fontFamily:"'Orbitron',monospace" }}>{sym}</span>
+              {liveData && <span style={{ fontSize:10, color:'#4a6a4a' }}>· {liveData.name}</span>}
+              <button onClick={() => { setSym(''); setLiveData(null); setResult(null); setError(null) }}
+                style={{ marginLeft:'auto', background:'transparent', border:'1px solid #1a2a1a', color:'#2a4a2a',
+                  padding:'2px 8px', borderRadius:3, fontSize:9, cursor:'pointer' }}>CLEAR ✕</button>
+            </div>
+          )}
         </div>
 
-        {/* LIVE PRICE BAR */}
+        {/* ── LIVE PRICE BAR ── */}
         {sym && (
           <div style={{ marginBottom:14 }}>
             {liveLoading && (
               <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:'12px 20px', display:'flex', gap:10, alignItems:'center' }}>
-                <Dot color="#ffd700" pulse /><span style={{ fontSize:10, color:'#ffd700', letterSpacing:'2px' }}>FETCHING LIVE PRICE · {sym}...</span>
+                <Dot color="#ffd700" pulse />
+                <span style={{ fontSize:10, color:'#ffd700', letterSpacing:'2px' }}>FETCHING LIVE PRICE · {sym}...</span>
               </div>
             )}
             {liveError && !liveLoading && (
-              <div style={{ background:'rgba(255,0,56,.05)', border:'1px solid rgba(255,0,56,.2)', borderRadius:8, padding:'10px 18px', fontSize:10, color:'#ff4060' }}>⚠ {liveError}</div>
+              <div style={{ background:'rgba(255,0,56,.05)', border:'1px solid rgba(255,0,56,.2)', borderRadius:8, padding:'10px 18px', fontSize:10, color:'#ff4060' }}>
+                ⚠ {liveError}
+              </div>
             )}
             {liveData && !liveLoading && (() => {
               const up = liveData.change >= 0
               return (
-                <div style={{ background:'#060e06', border:`1px solid ${up ? 'rgba(0,255,144,.15)' : 'rgba(255,64,96,.15)'}`, borderRadius:8, padding:'14px 20px', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:14 }}>
+                <div style={{ background:'#060e06', border:`1px solid ${up ? 'rgba(0,255,144,.15)' : 'rgba(255,64,96,.15)'}`,
+                  borderRadius:8, padding:'14px 20px', display:'flex', alignItems:'center',
+                  justifyContent:'space-between', flexWrap:'wrap', gap:14 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:14 }}>
                     <Dot pulse />
                     <div>
-                      <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:3 }}>LIVE PRICE · {liveData.name}</div>
+                      <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:3 }}>
+                        LIVE PRICE · {liveData.name}{liveData.exchange ? ` · ${liveData.exchange}` : ''}
+                      </div>
                       <div style={{ display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap' }}>
-                        <span style={{ fontFamily:"'Orbitron',monospace", fontSize:26, fontWeight:900, color:'#e0ffe0' }}>{fmt(liveData.price)}</span>
+                        <span style={{ fontFamily:"'Orbitron',monospace", fontSize:26, fontWeight:900, color:'#e0ffe0' }}>
+                          {fmt(liveData.price)}
+                        </span>
                         <span style={{ fontSize:13, fontWeight:700, color: up ? '#00ff90' : '#ff4060' }}>
-                          {up ? '▲' : '▼'} {up ? '+' : ''}{liveData.change} ({up ? '+' : ''}{liveData.changePct}%)
+                          {up ? '▲' : '▼'} {up?'+':''}{liveData.change} ({up?'+':''}{liveData.changePct}%)
                         </span>
                       </div>
                     </div>
                   </div>
                   <div style={{ display:'flex', gap:20, flexWrap:'wrap' }}>
-                    {[['OPEN',fmt(liveData.open)],['HIGH',fmt(liveData.high),'rgba(0,255,144,.55)'],['LOW',fmt(liveData.low),'rgba(255,64,96,.55)'],['PREV CLOSE',fmt(liveData.prevClose)]].map(([l,v,c]) => (
+                    {[['OPEN',fmt(liveData.open)],['HIGH',fmt(liveData.high),'rgba(0,255,144,.55)'],
+                      ['LOW',fmt(liveData.low),'rgba(255,64,96,.55)'],['PREV CLOSE',fmt(liveData.prevClose)]].map(([l,v,c])=>(
                       <div key={l}>
                         <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'1px', marginBottom:2 }}>{l}</div>
                         <div style={{ fontSize:12, fontWeight:700, color:c||'#6a8a6a', fontFamily:"'Space Mono',monospace" }}>{v}</div>
@@ -411,25 +476,22 @@ USE $${live.price} as the EXACT basis for all price calculations.`
                 </div>
               )
             })()}
-            {!keySaved && (
-              <div style={{ background:'rgba(255,215,0,.04)', border:'1px solid rgba(255,215,0,.12)', borderRadius:8, padding:'10px 18px', marginTop:8, fontSize:10, color:'#ffd700' }}>
-                ⚠ No API key — enter your Finnhub key above for live prices. Analysis will still run with estimated prices.
-              </div>
-            )}
           </div>
         )}
 
-        {/* LOADER */}
+        {/* ── LOADER ── */}
         {loading && <StepLoader ticker={sym} />}
 
-        {/* ERROR */}
+        {/* ── ERROR ── */}
         {error && !loading && (
           <div style={{ background:'rgba(255,0,56,.05)', border:'1px solid rgba(255,0,56,.2)', borderRadius:8, padding:'12px 18px', marginBottom:14, color:'#ff4060', fontSize:11 }}>
             ⚠ {error}
           </div>
         )}
 
-        {/* ════════ RESULT ════════ */}
+        {/* ══════════════════════════════════
+            RESULT
+        ══════════════════════════════════ */}
         {result && !loading && dc && (
           <div style={{ animation:'fadeIn .4s ease' }}>
 
@@ -439,8 +501,9 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               </div>
             )}
 
-            {/* DECISION BANNER */}
-            <div style={{ background:dc.bg, border:`1px solid ${dc.border}`, borderRadius:8, padding:'18px 24px', marginBottom:12, display:'flex', alignItems:'center', justifyContent:'space-between', boxShadow:dc.glow, flexWrap:'wrap', gap:14 }}>
+            {/* Decision banner */}
+            <div style={{ background:dc.bg, border:`1px solid ${dc.border}`, borderRadius:8, padding:'18px 24px', marginBottom:12,
+              display:'flex', alignItems:'center', justifyContent:'space-between', boxShadow:dc.glow, flexWrap:'wrap', gap:14 }}>
               <div>
                 <div style={{ fontSize:9, color:dc.text, letterSpacing:'3px', marginBottom:4, opacity:.6 }}>TRADING SIGNAL</div>
                 <div style={{ display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap' }}>
@@ -451,36 +514,43 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               </div>
               <div style={{ textAlign:'right' }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:4 }}>CONFIDENCE</div>
-                <div style={{ fontSize:19, fontWeight:700, color:dc.text, fontFamily:"'Orbitron',monospace" }}>{(result.confidence||'').toUpperCase()}</div>
+                <div style={{ fontSize:19, fontWeight:700, color:dc.text, fontFamily:"'Orbitron',monospace" }}>
+                  {(result.confidence||'').toUpperCase()}
+                </div>
                 <div style={{ display:'flex', gap:4, justifyContent:'flex-end', marginTop:5 }}>
-                  {[0,1,2].map(i => <div key={i} style={{ width:26, height:4, borderRadius:2, background: i < (result.confidence==='High'?3:result.confidence==='Medium'?2:1) ? dc.text : '#0a1a0a' }} />)}
+                  {[0,1,2].map(i=>(
+                    <div key={i} style={{ width:26, height:4, borderRadius:2,
+                      background: i<(result.confidence==='High'?3:result.confidence==='Medium'?2:1) ? dc.text : '#0a1a0a' }} />
+                  ))}
                 </div>
                 <div style={{ fontSize:9, color:'#2a4a2a', marginTop:5 }}>{result.timeHorizon}</div>
               </div>
             </div>
 
-            {/* PRICE BOXES */}
+            {/* Price boxes */}
             <div style={{ display:'flex', gap:10, marginBottom:12, flexWrap:'wrap' }}>
               <PBox label="LIVE PRICE"   value={fmt(result.livePrice)}   color="#e0ffe0" sub="real-time" />
               <PBox label="ENTRY PRICE"  value={fmt(result.entryPrice)}  color="#aaffcc"
-                sub={result.livePrice && result.entryPrice ? `${Number(pctDiff(result.entryPrice,result.livePrice))>0?'+':''}${pctDiff(result.entryPrice,result.livePrice)}% from live` : null} />
-              <PBox label="STOP LOSS"    value={fmt(result.stopLoss)}    color="#ff4060" sub={downside ? `${downside}% downside` : null} />
-              <PBox label="TARGET PRICE" value={fmt(result.targetPrice)} color="#00ff90" sub={upside ? `+${upside}% upside` : null} />
+                sub={result.livePrice&&result.entryPrice ? `${Number(pctDiff(result.entryPrice,result.livePrice))>0?'+':''}${pctDiff(result.entryPrice,result.livePrice)}% from live` : null} />
+              <PBox label="STOP LOSS"    value={fmt(result.stopLoss)}    color="#ff4060" sub={downside?`${downside}% downside`:null} />
+              <PBox label="TARGET PRICE" value={fmt(result.targetPrice)} color="#00ff90" sub={upside?`+${upside}% upside`:null} />
               <div style={{ background:'#060e06', border:'1px solid #1e2a1e', borderRadius:6, padding:'11px 14px', flex:1, minWidth:110 }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:5 }}>RISK LEVEL</div>
-                <div style={{ fontSize:18, fontWeight:700, color:RC[result.riskLevel]||'#ffd700', fontFamily:"'Space Mono',monospace" }}>{(result.riskLevel||'').toUpperCase()}</div>
+                <div style={{ fontSize:18, fontWeight:700, color:RC[result.riskLevel]||'#ffd700', fontFamily:"'Space Mono',monospace" }}>
+                  {(result.riskLevel||'').toUpperCase()}
+                </div>
                 <div style={{ fontSize:9, color:'#1e3a1e', marginTop:3 }}>MAX 5-10% allocation</div>
               </div>
             </div>
 
-            {/* R/R */}
+            {/* R/R row */}
             {upside && downside && rr && (
               <div style={{ display:'flex', gap:10, marginBottom:12, flexWrap:'wrap' }}>
                 {[
                   ['UPSIDE POTENTIAL',`+${upside}%`,'#00ff90','rgba(0,255,144,.04)','rgba(0,255,144,.14)'],
                   ['MAX DOWNSIDE',`${downside}%`,'#ff4060','rgba(255,0,56,.04)','rgba(255,0,56,.14)'],
                   ['RISK / REWARD',`${rr}x`,'#ffd700','rgba(255,215,0,.04)','rgba(255,215,0,.14)'],
-                ].map(([l,v,c,bg,bd]) => (
+                ].map(([l,v,c,bg,bd])=>(
                   <div key={l} style={{ background:bg, border:`1px solid ${bd}`, borderRadius:6, padding:'10px 18px', flex:1, minWidth:130 }}>
                     <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:4 }}>{l}</div>
                     <div style={{ fontSize:20, fontWeight:700, color:c, fontFamily:"'Orbitron',monospace" }}>{v}</div>
@@ -489,7 +559,7 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               </div>
             )}
 
-            {/* REASONING + SIGNALS */}
+            {/* Reasoning + Signals */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:12, marginBottom:12 }}>
               <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ ANALYSIS REASONING</div>
@@ -498,11 +568,11 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ KEY SIGNALS</div>
                 {result.signals && Object.entries({
-                  'News Catalyst': result.signals.newsCatalyst,
-                  'Analyst Sentiment': result.signals.analystSentiment,
-                  'Financial Metrics': result.signals.financialMetrics,
-                  'Technical Indicators': result.signals.technicalIndicators,
-                  'Institutional Activity': result.signals.institutionalActivity,
+                  'News Catalyst':result.signals.newsCatalyst,
+                  'Analyst Sentiment':result.signals.analystSentiment,
+                  'Financial Metrics':result.signals.financialMetrics,
+                  'Technical Indicators':result.signals.technicalIndicators,
+                  'Institutional Activity':result.signals.institutionalActivity,
                 }).map(([k,v]) => v ? (
                   <div key={k} style={{ marginBottom:11 }}>
                     <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:3 }}>{k.toUpperCase()}</div>
@@ -512,11 +582,11 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               </div>
             </div>
 
-            {/* RISKS + STEPS */}
+            {/* Risks + Steps */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:12, marginBottom:16 }}>
               <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ KEY RISKS</div>
-                {Array.isArray(result.keyRisks) && result.keyRisks.map((r,i) => (
+                {Array.isArray(result.keyRisks) && result.keyRisks.map((r,i)=>(
                   <div key={i} style={{ display:'flex', gap:8, alignItems:'flex-start', marginBottom:9 }}>
                     <span style={{ color:'#ff4060', fontSize:9, marginTop:2, flexShrink:0 }}>▸</span>
                     <span style={{ fontSize:11, color:'#6a4a4a', lineHeight:1.5 }}>{r}</span>
@@ -526,33 +596,32 @@ USE $${live.price} as the EXACT basis for all price calculations.`
               <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
                 <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ TRADING STEPS</div>
                 {[
-                  `1. Verify ${fmt(result.livePrice || result.entryPrice)} in your broker`,
+                  `1. Verify ${fmt(result.livePrice||result.entryPrice)} in your broker`,
                   `2. Set stop loss: ${fmt(result.stopLoss)}`,
                   `3. Enter near: ${fmt(result.entryPrice)}`,
                   `4. Target: ${fmt(result.targetPrice)}`,
                   '5. Monitor news daily',
-                ].map((s,i) => (
+                ].map((s,i)=>(
                   <div key={i} style={{ fontSize:11, color:'#3a5a3a', marginBottom:8, lineHeight:1.5 }}>{s}</div>
                 ))}
                 <div style={{ fontSize:9, color:'#1e3a1e', marginTop:10, letterSpacing:'1px' }}>SECTOR: {result.sectorAllocation}</div>
               </div>
             </div>
-
           </div>
         )}
 
-        {/* HISTORY */}
+        {/* History */}
         {history.length > 0 && (
           <div style={{ marginTop:16 }}>
             <div style={{ fontSize:9, color:'#1e3a1e', letterSpacing:'3px', marginBottom:10 }}>▸ SESSION HISTORY</div>
             <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              {history.map((h,i) => {
-                const c = DC[h.decision] || DC.HOLD
+              {history.map((h,i)=>{
+                const c = DC[h.decision]||DC.HOLD
                 return (
-                  <div key={i} className="hbadge" onClick={() => setResult(h)}
-                    style={{ background:c.bg, border:`1px solid ${c.border}20`, borderRadius:4, padding:'6px 12px', display:'flex', gap:8, alignItems:'center', transition:'background .15s' }}>
+                  <div key={i} className="hbadge" onClick={()=>setResult(h)}
+                    style={{ background:c.bg, border:`1px solid ${c.border}20`, borderRadius:4, padding:'6px 12px', display:'flex', gap:8, alignItems:'center' }}>
                     <span style={{ fontSize:11, fontWeight:700, color:'#e0ffe0' }}>{h.ticker}</span>
-                    {h.livePrice != null && <span style={{ fontSize:10, color:'#4a6a4a' }}>{fmt(h.livePrice)}</span>}
+                    {h.livePrice!=null && <span style={{ fontSize:10, color:'#4a6a4a' }}>{fmt(h.livePrice)}</span>}
                     <span style={{ fontSize:10, color:c.text, fontWeight:700 }}>{h.decision}</span>
                     <span style={{ fontSize:9, color:'#2a4a2a' }}>{new Date(h.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
                   </div>
@@ -562,12 +631,12 @@ USE $${live.price} as the EXACT basis for all price calculations.`
           </div>
         )}
 
-        {/* EMPTY STATE */}
+        {/* Empty state */}
         {!result && !loading && !error && !sym && (
           <div style={{ textAlign:'center', padding:56, border:'1px dashed #0a1a0a', borderRadius:8 }}>
             <div style={{ fontFamily:"'Orbitron',monospace", fontSize:34, color:'#0a1a0a', marginBottom:10 }}>◈</div>
             <div style={{ fontSize:10, color:'#1e3a1e', letterSpacing:'3px' }}>
-              {keySaved ? 'SELECT A TICKER · CLICK ANALYZE ▸' : 'ENTER FINNHUB API KEY · SELECT TICKER · ANALYZE'}
+              SEARCH A STOCK OR SELECT FROM POPULAR TICKERS ABOVE
             </div>
           </div>
         )}
