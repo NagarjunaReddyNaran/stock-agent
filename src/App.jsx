@@ -246,31 +246,75 @@ function StepLoader({ ticker }) {
 // ─── TRADINGVIEW CHART ────────────────────────────────────────────────────────
 function TradingChart({ symbol }) {
   const ref = useRef(null)
+  const [chartInterval, setChartInterval] = React.useState('D')
+  const [height, setHeight] = React.useState(500)
+
+  useEffect(() => {
+    function updateHeight() {
+      setHeight(window.innerWidth < 640 ? 340 : window.innerWidth < 900 ? 440 : 560)
+    }
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    return () => window.removeEventListener('resize', updateHeight)
+  }, [])
+
   useEffect(() => {
     if (!symbol || !ref.current) return
     ref.current.innerHTML = ''
-    const s = document.createElement('script')
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
-    s.async = true
-    s.innerHTML = JSON.stringify({
-      autosize:true, symbol, interval:'D', timezone:'Etc/UTC',
-      theme:'light', style:'1', locale:'en',
-      backgroundColor:'#ffffff', gridColor:'rgba(0,0,0,0.04)',
-      hide_top_toolbar:false, hide_legend:false, save_image:false,
+    const wrap = document.createElement('div')
+    wrap.style.width = '100%'
+    wrap.style.height = '100%'
+    const widget = document.createElement('div')
+    widget.className = 'tradingview-widget-container__widget'
+    widget.style.width = '100%'
+    widget.style.height = '100%'
+    const script = document.createElement('script')
+    script.type = 'text/javascript'
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
+    script.async = true
+    script.innerHTML = JSON.stringify({
+      autosize: true, symbol, interval: chartInterval,
+      timezone: 'Etc/UTC', theme: 'light', style: '1', locale: 'en',
+      backgroundColor: '#ffffff', gridColor: 'rgba(0,0,0,0.03)',
+      hide_top_toolbar: false, hide_legend: false,
+      hide_side_toolbar: false, save_image: false, allow_symbol_change: true,
     })
-    ref.current.appendChild(s)
-  }, [symbol])
+    wrap.appendChild(widget)
+    wrap.appendChild(script)
+    ref.current.appendChild(wrap)
+  }, [symbol, chartInterval])
+
+  const INTERVALS = [
+    {label:'1m',value:'1'},{label:'5m',value:'5'},{label:'15m',value:'15'},
+    {label:'1H',value:'60'},{label:'4H',value:'240'},{label:'1D',value:'D'},
+    {label:'1W',value:'W'},{label:'1M',value:'M'},
+  ]
 
   if (!symbol) return (
-    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:360,color:C.text3,gap:12 }}>
-      <span style={{ fontSize:48 }}>📊</span>
-      <span style={{ fontSize:15 }}>Search for a stock above to view its chart</span>
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:360,color:C.text3,gap:12,padding:24 }}>
+      <span style={{ fontSize:56 }}>📊</span>
+      <span style={{ fontSize:16,fontWeight:600,color:C.text2 }}>Search for a stock to view its chart</span>
+      <span style={{ fontSize:14,color:C.text3,textAlign:'center' }}>Live price charts powered by TradingView</span>
     </div>
   )
+
   return (
-    <div style={{ borderRadius:12,overflow:'hidden',border:`1px solid ${C.border}` }}>
-      <div className="tradingview-widget-container" ref={ref} style={{ minHeight:420 }}>
-        <div className="tradingview-widget-container__widget" style={{ height:'100%',width:'100%' }} />
+    <div>
+      <div style={{ display:'flex',gap:6,marginBottom:12,flexWrap:'wrap',alignItems:'center' }}>
+        <span style={{ fontSize:12,color:C.text3,fontWeight:600,marginRight:4 }}>Interval:</span>
+        {INTERVALS.map(i => (
+          <button key={i.value} onClick={()=>setChartInterval(i.value)}
+            style={{ padding:'6px 12px',borderRadius:8,border:`1.5px solid ${chartInterval===i.value?C.brand:C.border}`,background:chartInterval===i.value?C.brandLight:C.cardBg,color:chartInterval===i.value?C.brand:C.text2,fontSize:13,fontWeight:600,cursor:'pointer',transition:'all .15s' }}>
+            {i.label}
+          </button>
+        ))}
+        <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>Powered by TradingView</span>
+      </div>
+      <div style={{ width:'100%',height:height,borderRadius:12,overflow:'hidden',border:`1px solid ${C.border}`,background:C.cardBg }}>
+        <div ref={ref} style={{ width:'100%',height:'100%' }} />
+      </div>
+      <div style={{ marginTop:8,fontSize:12,color:C.text3,textAlign:'center' }}>
+        Pinch to zoom · Drag to pan · Tap any symbol on chart to change stock
       </div>
     </div>
   )
@@ -972,13 +1016,28 @@ export default function App() {
         {/* ══════════ CHART ══════════ */}
         {tab === 'CHART' && (
           <div style={{ animation:'fadeUp .3s ease' }}>
-            <Card style={{ marginBottom:16 }}>
-              <SectionTitle>Price Chart</SectionTitle>
-              <div style={{ marginBottom:16 }}>
-                <SearchBox onSelect={s=>{setSym(s.toUpperCase());}} placeholder="Search stock to view chart..." />
+            {/* Search */}
+            <Card style={{ marginBottom:12,padding:'16px 18px' }}>
+              <div style={{ display:'flex',alignItems:'center',gap:12,flexWrap:'wrap' }}>
+                <span style={{ fontSize:13,fontWeight:700,color:C.brand,whiteSpace:'nowrap' }}>📊 Price Chart</span>
+                <div style={{ flex:1,minWidth:200 }}>
+                  <SearchBox onSelect={s=>{setSym(s.toUpperCase())}} placeholder="Search stock to view chart..." />
+                </div>
+                {sym && liveData && (
+                  <div style={{ display:'flex',alignItems:'center',gap:10,flexShrink:0 }}>
+                    <span style={{ fontSize:15,fontWeight:700,fontFamily:"'DM Mono',monospace",color:C.text1 }}>{sym}</span>
+                    <span style={{ fontSize:15,fontWeight:700,fontFamily:"'DM Mono',monospace",color:C.text1 }}>{fmt(liveData.price)}</span>
+                    <span style={{ fontSize:13,fontWeight:600,color:liveData.change>=0?C.buy:C.sell }}>
+                      {liveData.change>=0?'▲':'▼'} {liveData.change>=0?'+':''}{liveData.changePct}%
+                    </span>
+                  </div>
+                )}
               </div>
-              <TradingChart symbol={sym} />
             </Card>
+            {/* Chart — no card padding so it fills full width */}
+            <div style={{ background:C.cardBg,borderRadius:16,border:`1px solid ${C.border}`,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+              <TradingChart symbol={sym} />
+            </div>
           </div>
         )}
 
