@@ -245,76 +245,127 @@ function StepLoader({ ticker }) {
 
 // ─── TRADINGVIEW CHART ────────────────────────────────────────────────────────
 function TradingChart({ symbol }) {
-  const ref = useRef(null)
+  const wrapRef        = useRef(null)
   const [chartInterval, setChartInterval] = React.useState('D')
-  const [height, setHeight] = React.useState(500)
+
+  // Calculate chart height based on viewport
+  function getHeight() {
+    if (typeof window === 'undefined') return 500
+    if (window.innerWidth < 640) return 380
+    if (window.innerWidth < 1024) return 500
+    return 600
+  }
+  const [height, setHeight] = React.useState(getHeight)
 
   useEffect(() => {
-    function updateHeight() {
-      setHeight(window.innerWidth < 640 ? 340 : window.innerWidth < 900 ? 440 : 560)
-    }
-    updateHeight()
-    window.addEventListener('resize', updateHeight)
-    return () => window.removeEventListener('resize', updateHeight)
+    const onResize = () => setHeight(getHeight())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   useEffect(() => {
-    if (!symbol || !ref.current) return
-    ref.current.innerHTML = ''
-    const wrap = document.createElement('div')
-    wrap.style.width = '100%'
-    wrap.style.height = '100%'
-    const widget = document.createElement('div')
-    widget.className = 'tradingview-widget-container__widget'
-    widget.style.width = '100%'
-    widget.style.height = '100%'
+    if (!symbol || !wrapRef.current) return
+
+    // Fully clear previous widget
+    wrapRef.current.innerHTML = ''
+
+    // TradingView requires the container to exist in DOM before the script runs
+    // Use iframe-based widget for most reliable full-height rendering
+    const iframe = document.createElement('iframe')
+    iframe.style.width   = '100%'
+    iframe.style.height  = '100%'
+    iframe.style.border  = 'none'
+    iframe.style.display = 'block'
+    iframe.setAttribute('allowtransparency', 'true')
+    iframe.setAttribute('scrolling', 'no')
+
+    const color    = encodeURIComponent('#ffffff')
+    const gridClr  = encodeURIComponent('rgba(0,0,0,0.03)')
+    iframe.src = `https://s3.tradingview.com/widgetbar-chart-only.html`
+
+    // Use widget script approach but with explicit width/height in config
+    const container = document.createElement('div')
+    container.className = 'tradingview-widget-container'
+    container.style.width  = '100%'
+    container.style.height = '100%'
+    container.style.position = 'relative'
+
+    const inner = document.createElement('div')
+    inner.className = 'tradingview-widget-container__widget'
+    inner.style.width  = '100%'
+    inner.style.height = 'calc(100% - 32px)'
+    inner.style.position = 'absolute'
+    inner.style.top = '0'
+    inner.style.left = '0'
+
     const script = document.createElement('script')
-    script.type = 'text/javascript'
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
-    script.async = true
-    script.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: chartInterval,
-      timezone: 'Etc/UTC', theme: 'light', style: '1', locale: 'en',
-      backgroundColor: '#ffffff', gridColor: 'rgba(0,0,0,0.03)',
-      hide_top_toolbar: false, hide_legend: false,
-      hide_side_toolbar: false, save_image: false, allow_symbol_change: true,
-    })
-    wrap.appendChild(widget)
-    wrap.appendChild(script)
-    ref.current.appendChild(wrap)
-  }, [symbol, chartInterval])
+    script.type  = 'text/javascript'
+    script.src   = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
+    script.async = false
+
+    const cfg = {
+      autosize:            false,
+      width:               wrapRef.current.offsetWidth || 900,
+      height:              height,
+      symbol:              symbol,
+      interval:            chartInterval,
+      timezone:            'Etc/UTC',
+      theme:               'light',
+      style:               '1',
+      locale:              'en',
+      backgroundColor:     '#ffffff',
+      gridColor:           'rgba(0,0,0,0.03)',
+      hide_top_toolbar:    false,
+      hide_legend:         false,
+      hide_side_toolbar:   false,
+      allow_symbol_change: true,
+      save_image:          false,
+      withdateranges:      true,
+    }
+    script.text = JSON.stringify(cfg)
+
+    container.appendChild(inner)
+    container.appendChild(script)
+    wrapRef.current.appendChild(container)
+  }, [symbol, chartInterval, height])
 
   const INTERVALS = [
     {label:'1m',value:'1'},{label:'5m',value:'5'},{label:'15m',value:'15'},
-    {label:'1H',value:'60'},{label:'4H',value:'240'},{label:'1D',value:'D'},
-    {label:'1W',value:'W'},{label:'1M',value:'M'},
+    {label:'1H',value:'60'},{label:'4H',value:'240'},
+    {label:'1D',value:'D'},{label:'1W',value:'W'},{label:'1M',value:'M'},
   ]
 
   if (!symbol) return (
-    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:360,color:C.text3,gap:12,padding:24 }}>
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:400,color:C.text3,gap:12,padding:24 }}>
       <span style={{ fontSize:56 }}>📊</span>
       <span style={{ fontSize:16,fontWeight:600,color:C.text2 }}>Search for a stock to view its chart</span>
-      <span style={{ fontSize:14,color:C.text3,textAlign:'center' }}>Live price charts powered by TradingView</span>
+      <span style={{ fontSize:14,color:C.text3,textAlign:'center' }}>Live interactive charts powered by TradingView</span>
     </div>
   )
 
   return (
     <div>
-      <div style={{ display:'flex',gap:6,marginBottom:12,flexWrap:'wrap',alignItems:'center' }}>
-        <span style={{ fontSize:12,color:C.text3,fontWeight:600,marginRight:4 }}>Interval:</span>
+      {/* Interval pills */}
+      <div style={{ display:'flex',gap:6,marginBottom:14,flexWrap:'wrap',alignItems:'center' }}>
+        <span style={{ fontSize:12,color:C.text3,fontWeight:600,marginRight:2 }}>Timeframe:</span>
         {INTERVALS.map(i => (
           <button key={i.value} onClick={()=>setChartInterval(i.value)}
-            style={{ padding:'6px 12px',borderRadius:8,border:`1.5px solid ${chartInterval===i.value?C.brand:C.border}`,background:chartInterval===i.value?C.brandLight:C.cardBg,color:chartInterval===i.value?C.brand:C.text2,fontSize:13,fontWeight:600,cursor:'pointer',transition:'all .15s' }}>
+            style={{ padding:'7px 13px',borderRadius:8,border:`1.5px solid ${chartInterval===i.value?C.brand:C.border}`,background:chartInterval===i.value?C.brandLight:C.cardBg,color:chartInterval===i.value?C.brand:C.text2,fontSize:13,fontWeight:700,cursor:'pointer',transition:'all .15s',lineHeight:1 }}>
             {i.label}
           </button>
         ))}
-        <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>Powered by TradingView</span>
+        <span style={{ marginLeft:'auto',fontSize:11,color:C.text4,display:'flex',alignItems:'center',gap:4 }}>
+          <span>📊</span> TradingView
+        </span>
       </div>
-      <div style={{ width:'100%',height:height,borderRadius:12,overflow:'hidden',border:`1px solid ${C.border}`,background:C.cardBg }}>
-        <div ref={ref} style={{ width:'100%',height:'100%' }} />
+
+      {/* The chart — explicit pixel height, no % heights on parent */}
+      <div style={{ width:'100%', height:height, borderRadius:12, overflow:'hidden', border:`1.5px solid ${C.border}`, background:'#fff', position:'relative' }}>
+        <div ref={wrapRef} style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} />
       </div>
-      <div style={{ marginTop:8,fontSize:12,color:C.text3,textAlign:'center' }}>
-        Pinch to zoom · Drag to pan · Tap any symbol on chart to change stock
+
+      <div style={{ marginTop:10,fontSize:12,color:C.text4,textAlign:'center' }}>
+        Drag to pan · Scroll to zoom · Use toolbar above chart for drawing tools
       </div>
     </div>
   )
