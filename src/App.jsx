@@ -393,7 +393,7 @@ function AlertsTab({ lastResult }) {
               <div style={{ fontSize:11,color:'#475569' }}>Last analysis · {fmt(lastResult.livePrice)}</div>
             </div>
             <button onClick={()=>sendAlert(lastResult)} disabled={sending||!email}
-              style={{ marginLeft:'auto',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.3)',color:'#6366f1',padding:'10px 20px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,opacity:sending||!email?.0.5:1 }}>
+              style={{ marginLeft:'auto',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.3)',color:'#6366f1',padding:'10px 20px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,opacity:(sending||!email)?0.5:1 }}>
               {sending?'Sending...':'📧 Send Alert'}
             </button>
           </div>
