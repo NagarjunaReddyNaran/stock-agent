@@ -222,23 +222,18 @@ USE $${live.price} as the EXACT basis for all price calculations.`
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1500,
           system: SYSTEM_PROMPT,
-          messages: [{
-            role: 'user',
-            content: `${priceBlock}\n\nAnalyze ${sym} stock. ${context ? 'Context: ' + context : ''}\nReturn ONLY the JSON object, nothing else.`,
-          }],
+          userMessage: `${priceBlock}\n\nAnalyze ${sym} stock. ${context ? 'Context: ' + context : ''}\nReturn ONLY the JSON object, nothing else.`,
         }),
       })
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error?.message || `API error ${res.status}`)
+        throw new Error(body?.error || `API error ${res.status}`)
       }
 
       const data = await res.json()
-      const txt = (data.content || []).map(b => b.text || '').join('').trim()
+      const txt = (data.text || '').trim()
       setRawResponse(txt)
 
       // strip any accidental markdown fences then extract JSON
