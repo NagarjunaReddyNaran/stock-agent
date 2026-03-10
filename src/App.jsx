@@ -462,17 +462,15 @@ function AlertsTab({ lastResult }) {
           ))}
         </div>
 
-        {/* Resend setup notice */}
-        <div style={{ background:'#fff8f0',border:'1px solid #fed7aa',borderRadius:12,padding:'14px 16px' }}>
-          <div style={{ fontSize:14,fontWeight:700,color:'#c2410c',marginBottom:6 }}>⚙️ One-time server setup required</div>
-          <div style={{ fontSize:13,color:'#7c3a1c',lineHeight:1.7 }}>
-            Email delivery needs a free <strong>Resend</strong> API key added to your Vercel settings.
-            <br/>
-            <strong>Step 1:</strong> Go to <a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:'#c2410c',fontWeight:700}}>resend.com</a> → Sign up free (no credit card) → Copy your API key
-            <br/>
-            <strong>Step 2:</strong> Go to your Vercel dashboard → Settings → Environment Variables → Add <code style={{background:'#fed7aa',padding:'1px 6px',borderRadius:4}}>RESEND_API_KEY</code> → Redeploy
-            <br/>
-            <strong>Free tier:</strong> 100 emails/day — more than enough for personal use.
+        {/* Free tier note */}
+        <div style={{ background:C.buyBg,border:`1px solid ${C.buyBorder}`,borderRadius:12,padding:'14px 16px',display:'flex',gap:12,alignItems:'flex-start' }}>
+          <span style={{ fontSize:20,flexShrink:0 }}>💡</span>
+          <div style={{ fontSize:13,color:C.text2,lineHeight:1.7 }}>
+            <strong style={{color:C.buy}}>Free plan tip:</strong> Resend free tier only sends to your own Resend account email.
+            Enter that same email below and alerts will work instantly.
+            Want to send to any email? Verify a domain at{' '}
+            <a href="https://resend.com/domains" target="_blank" rel="noreferrer" style={{color:C.brand,fontWeight:600}}>resend.com/domains</a>
+            {' '}(takes 5 minutes, any domain works).
           </div>
         </div>
       </Card>
