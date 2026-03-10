@@ -1,5 +1,30 @@
+// Simple in-memory rate limiter (resets on cold start — good enough for Vercel serverless)
+const rateMap = new Map()
+const RATE_LIMIT = 20      // max requests
+const RATE_WINDOW = 60000  // per 60 seconds
+
+function isRateLimited(ip) {
+  const now = Date.now()
+  const entry = rateMap.get(ip) || { count: 0, start: now }
+  if (now - entry.start > RATE_WINDOW) {
+    rateMap.set(ip, { count: 1, start: now })
+    return false
+  }
+  if (entry.count >= RATE_LIMIT) return true
+  entry.count++
+  rateMap.set(ip, entry)
+  return false
+}
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown'
+  if (isRateLimited(ip)) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' })
+  }
+  const origin = req.headers.origin || ''
+  const allowed = process.env.ALLOWED_ORIGIN || '*'
+  res.setHeader('Access-Control-Allow-Origin', allowed)
+  res.setHeader('Vary', 'Origin')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 

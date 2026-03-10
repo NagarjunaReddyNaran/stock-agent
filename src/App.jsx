@@ -269,21 +269,7 @@ function TradingChart({ symbol }) {
     // Fully clear previous widget
     wrapRef.current.innerHTML = ''
 
-    // TradingView requires the container to exist in DOM before the script runs
-    // Use iframe-based widget for most reliable full-height rendering
-    const iframe = document.createElement('iframe')
-    iframe.style.width   = '100%'
-    iframe.style.height  = '100%'
-    iframe.style.border  = 'none'
-    iframe.style.display = 'block'
-    iframe.setAttribute('allowtransparency', 'true')
-    iframe.setAttribute('scrolling', 'no')
-
-    const color    = encodeURIComponent('#ffffff')
-    const gridClr  = encodeURIComponent('rgba(0,0,0,0.03)')
-    iframe.src = `https://s3.tradingview.com/widgetbar-chart-only.html`
-
-    // Use widget script approach but with explicit width/height in config
+    // Use widget script with explicit pixel width/height so chart fills container correctly
     const container = document.createElement('div')
     container.className = 'tradingview-widget-container'
     container.style.width  = '100%'
@@ -301,7 +287,7 @@ function TradingChart({ symbol }) {
     const script = document.createElement('script')
     script.type  = 'text/javascript'
     script.src   = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
-    script.async = false
+    script.async = true
 
     const cfg = {
       autosize:            false,
@@ -728,7 +714,7 @@ export default function App() {
   const rr       = upside && downside && parseFloat(downside)!==0 ? (Math.abs(parseFloat(upside))/Math.abs(parseFloat(downside))).toFixed(2) : null
 
   return (
-    <div style={{ background:C.pageBg,minHeight:'100vh',minHeight:'100dvh',fontFamily:"'DM Sans',sans-serif",color:C.text1 }}>
+    <div style={{ background:C.pageBg,minHeight:'100dvh',fontFamily:"'DM Sans',sans-serif",color:C.text1 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap');
         @keyframes spin   { to{transform:rotate(360deg)} }

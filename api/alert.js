@@ -1,5 +1,8 @@
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  const origin = req.headers.origin || ''
+  const allowed = process.env.ALLOWED_ORIGIN || '*'
+  res.setHeader('Access-Control-Allow-Origin', allowed)
+  res.setHeader('Vary', 'Origin')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -10,6 +13,17 @@ export default async function handler(req, res) {
 
   const { to, ticker, decision, confidence, entryPrice, stopLoss, targetPrice, reasoning, livePrice } = req.body
   if (!to || !ticker || !decision) return res.status(400).json({ error: 'Missing required fields.' })
+
+  // Basic email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(to)) return res.status(400).json({ error: 'Invalid email address.' })
+
+  // Sanitize to prevent HTML injection in the email body
+  const safe = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const safeTicker    = safe(ticker).toUpperCase().slice(0, 10)
+  const safeDecision  = ['BUY','SELL','HOLD'].includes(String(decision).toUpperCase()) ? String(decision).toUpperCase() : 'HOLD'
+  const safeConf      = safe(confidence).slice(0, 20)
+  const safeReasoning = safe(reasoning).slice(0, 2000)
 
   const clr = decision === 'BUY' ? '#10b981' : decision === 'SELL' ? '#f43f5e' : '#f59e0b'
   const upside = livePrice && targetPrice ? (((targetPrice - livePrice) / livePrice) * 100).toFixed(2) : null
