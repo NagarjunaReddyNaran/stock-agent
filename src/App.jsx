@@ -1,246 +1,139 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
+// ─── SYSTEM PROMPT ────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are an AI Stock Market Trading Agent responsible for analyzing financial markets and making buy, sell, or hold decisions for stocks.
 
 Your decisions must be based on data-driven analysis, market news, financial metrics, analyst sentiment, and macroeconomic conditions. Your objective is to maximize long-term portfolio returns while minimizing risk.
 
-DATA SOURCES TO MONITOR:
-- Breaking financial news (Bloomberg, Reuters, CNBC, WSJ, Financial Times)
-- Analyst upgrades/downgrades, target price revisions, institutional buying/selling
-- Financial metrics: P/E, Forward P/E, PEG, Price to Book, EV/EBITDA, Revenue/Earnings growth, FCF, Debt/Equity, ROE, ROIC
-- Technical indicators: 50/200-day MA, RSI, MACD, Volume, Support/Resistance, Breakouts
-- Market sentiment: news, social media, options flow, institutional activity
-- Macro factors: interest rates, CPI, GDP, unemployment, Fed policy, bond yields
+DATA SOURCES: Bloomberg, Reuters, CNBC, WSJ; analyst upgrades/downgrades; P/E, Forward P/E, EV/EBITDA, Revenue growth, FCF, ROE, ROIC; 50/200-day MA, RSI, MACD, Volume; CPI, GDP, Fed policy, bond yields.
 
-RISK MANAGEMENT:
-- Never allocate more than 5-10% to a single stock
-- Always use stop loss (5-8%) and take profit targets
-- Avoid extreme volatility unless strong catalysts exist
-- Never decide on a single signal - confirm with at least 3 independent signals
+RISK MANAGEMENT: Max 5-10% per stock. Always use stop loss (5-8%) and take profit. Confirm with at least 3 independent signals.
 
-TRADE RULES:
-- BUY when: positive catalyst + analyst upgrade + strong fundamentals + technical uptrend + institutional buying
-- SELL when: negative news + downgrade + deteriorating fundamentals + trend reversal + stop-loss hit
-
-PORTFOLIO BALANCE across: technology, healthcare, energy, financials, consumer goods, industrials
+BUY: positive catalyst + analyst upgrade + strong fundamentals + technical uptrend + institutional buying
+SELL: negative news + downgrade + deteriorating fundamentals + trend reversal + stop-loss hit
 
 IMPORTANT: You will be given the LIVE current price. Base ALL price targets on it exactly.
 - Entry price = current price (for BUY)
 - Stop loss = 5-8% below entry for BUY
-- Target price = realistic upside: 10-25% medium-term, 5-15% short-term
+- Target price = 10-25% upside medium-term, 5-15% short-term
 
-OUTPUT - return ONLY a raw JSON object. No markdown, no backticks, no text before or after:
-{
-  "ticker": "SYMBOL",
-  "companyName": "Full Company Name",
-  "decision": "BUY",
-  "confidence": "High",
-  "riskLevel": "Low",
-  "entryPrice": 150.00,
-  "stopLoss": 139.50,
-  "targetPrice": 172.50,
-  "reasoning": "Detailed paragraph explaining the decision",
-  "signals": {
-    "newsCatalyst": "Description",
-    "analystSentiment": "Description",
-    "financialMetrics": "Description",
-    "technicalIndicators": "Description",
-    "institutionalActivity": "Description"
-  },
-  "sectorAllocation": "Technology",
-  "keyRisks": ["risk1", "risk2", "risk3"],
-  "timeHorizon": "Medium-term (months)"
-}`
+OUTPUT - return ONLY raw JSON, no markdown, no backticks:
+{"ticker":"SYMBOL","companyName":"Full Name","decision":"BUY","confidence":"High","riskLevel":"Low","entryPrice":150.00,"stopLoss":139.50,"targetPrice":172.50,"reasoning":"Detailed paragraph","signals":{"newsCatalyst":"...","analystSentiment":"...","financialMetrics":"...","technicalIndicators":"...","institutionalActivity":"..."},"sectorAllocation":"Technology","keyRisks":["risk1","risk2","risk3"],"timeHorizon":"Medium-term (months)"}`
 
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const POPULAR = ['AAPL','NVDA','MSFT','GOOGL','AMZN','TSLA','META','JPM','JNJ','XOM','V','UNH','NFLX','AMD','WMT']
 
-const DC = {
-  BUY:  { bg:'rgba(0,255,144,0.08)', border:'#00ff90', text:'#00ff90', glow:'0 0 28px rgba(0,255,144,0.27)' },
-  SELL: { bg:'rgba(255,0,56,0.08)',  border:'#ff4060', text:'#ff4060', glow:'0 0 28px rgba(255,0,56,0.27)' },
-  HOLD: { bg:'rgba(255,215,0,0.08)', border:'#ffd700', text:'#ffd700', glow:'0 0 28px rgba(255,215,0,0.27)' },
+const DECISION_STYLE = {
+  BUY:  { bg:'rgba(16,185,129,0.1)', border:'rgba(16,185,129,0.4)', text:'#10b981', glow:'0 0 30px rgba(16,185,129,0.2)', badge:'#10b981' },
+  SELL: { bg:'rgba(244,63,94,0.1)',  border:'rgba(244,63,94,0.4)',  text:'#f43f5e', glow:'0 0 30px rgba(244,63,94,0.2)',  badge:'#f43f5e' },
+  HOLD: { bg:'rgba(245,158,11,0.1)', border:'rgba(245,158,11,0.4)', text:'#f59e0b', glow:'0 0 30px rgba(245,158,11,0.2)', badge:'#f59e0b' },
 }
-const RC = { Low:'#00ff90', Medium:'#ffd700', High:'#ff4060' }
+const RISK_COLOR = { Low:'#10b981', Medium:'#f59e0b', High:'#f43f5e' }
 
-function fmt(n) {
-  if (n == null || isNaN(Number(n))) return '—'
-  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })
-}
-function pctDiff(a, b) {
-  if (!b || !a || isNaN(a) || isNaN(b)) return null
-  return (((a - b) / b) * 100).toFixed(2)
-}
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const fmt  = n => (n==null||isNaN(Number(n))) ? '—' : '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+const pct  = (a,b) => (!b||!a||isNaN(a)||isNaN(b)) ? null : (((a-b)/b)*100).toFixed(2)
+const ago  = ts => { const s=Math.floor((Date.now()-ts*1000)/1000); if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago' }
+const lsGet = (k,d) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d }catch{ return d } }
+const lsSet = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)) }catch{} }
 
-// ── API calls (server-side proxied) ──────────────────────────────────────────
-async function fetchPrice(symbol) {
-  const res = await fetch(`/api/price?symbol=${encodeURIComponent(symbol)}`)
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || `Price fetch failed`)
-  return data
-}
+// ─── API ──────────────────────────────────────────────────────────────────────
+const fetchPrice  = async sym => { const r=await fetch(`/api/price?symbol=${encodeURIComponent(sym)}`); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const fetchNews   = async sym => { const r=await fetch(`/api/news?symbol=${encodeURIComponent(sym)}`);  const d=await r.json(); return d.articles||[] }
+const searchTickers = async q => { const r=await fetch(`/api/search?q=${encodeURIComponent(q)}`); const d=await r.json(); return d.results||[] }
 
-async function searchTickers(query) {
-  const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
-  const data = await res.json()
-  if (!res.ok) return []
-  return data.results || []
+// ─── COMPONENTS ───────────────────────────────────────────────────────────────
+function Spinner() {
+  return <div style={{ width:18,height:18,border:'2px solid rgba(99,102,241,0.2)',borderTopColor:'#6366f1',borderRadius:'50%',animation:'spin .7s linear infinite',flexShrink:0 }} />
 }
 
-// ── Small components ──────────────────────────────────────────────────────────
-function Dot({ color = '#00ff90', pulse = false }) {
+function Badge({ children, color }) {
   return (
-    <span style={{
-      display:'inline-block', width:7, height:7, borderRadius:'50%',
-      background:color, boxShadow:`0 0 8px ${color}`, flexShrink:0,
-      animation: pulse ? 'blink 1.8s infinite' : 'none',
-    }} />
+    <span style={{ display:'inline-block',padding:'2px 10px',borderRadius:20,fontSize:10,fontWeight:700,letterSpacing:'1px',background:`${color}20`,border:`1px solid ${color}50`,color }}>
+      {children}
+    </span>
   )
 }
 
-function PBox({ label, value, color, sub }) {
+function StatBox({ label, value, color, sub, icon }) {
   return (
-    <div style={{ background:'#060e06', border:'1px solid #1e2a1e', borderRadius:6, padding:'11px 14px', flex:1, minWidth:110 }}>
-      <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:5 }}>{label}</div>
-      <div style={{ fontSize:18, fontWeight:700, color:color||'#e0ffe0', fontFamily:"'Space Mono',monospace" }}>{value||'—'}</div>
-      {sub && <div style={{ fontSize:9, color:'#2a4a2a', marginTop:3 }}>{sub}</div>}
+    <div style={{ background:'rgba(15,23,42,0.8)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:12,padding:'14px 16px',flex:1,minWidth:100 }}>
+      <div style={{ fontSize:9,color:'#475569',letterSpacing:'2px',marginBottom:6,display:'flex',alignItems:'center',gap:4 }}>
+        {icon && <span>{icon}</span>}{label}
+      </div>
+      <div style={{ fontSize:17,fontWeight:700,color:color||'#e2e8f0',fontFamily:"'DM Mono',monospace" }}>{value||'—'}</div>
+      {sub && <div style={{ fontSize:10,color:'#475569',marginTop:4 }}>{sub}</div>}
     </div>
   )
 }
 
-function StepLoader({ ticker }) {
-  const steps = ['FETCHING LIVE PRICE','SCANNING SIGNALS','EVALUATING FUNDAMENTALS','COMPUTING RISK','GENERATING RECOMMENDATION']
-  const [step, setStep] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 850)
-    return () => clearInterval(t)
-  }, [])
-  return (
-    <div style={{ background:'#060e06', border:'1px solid #0a2a0a', borderRadius:8, padding:32, textAlign:'center', marginBottom:16 }}>
-      <div style={{ fontFamily:"'Orbitron',monospace", fontSize:11, color:'#00ff90', letterSpacing:'3px', marginBottom:20 }}>
-        ANALYZING {ticker}
-      </div>
-      <div style={{ display:'flex', flexDirection:'column', gap:10, maxWidth:300, margin:'0 auto', textAlign:'left' }}>
-        {steps.map((s, i) => (
-          <div key={i} style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <div style={{
-              width:6, height:6, borderRadius:'50%', flexShrink:0,
-              background: i < step ? '#00ff90' : i === step ? '#ffd700' : '#1e2a1e',
-              boxShadow: i === step ? '0 0 8px #ffd700' : 'none',
-            }} />
-            <span style={{ fontSize:10, letterSpacing:'1px', color: i < step ? '#2a4a2a' : i === step ? '#ffd700' : '#1e2a1e' }}>{s}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+function SectionHead({ children }) {
+  return <div style={{ fontSize:10,color:'#6366f1',letterSpacing:'3px',fontWeight:700,marginBottom:14,display:'flex',alignItems:'center',gap:8 }}>
+    <div style={{ width:3,height:14,background:'#6366f1',borderRadius:2 }} />{children}
+  </div>
 }
 
-// ── Autocomplete search box ───────────────────────────────────────────────────
-function SearchBox({ onSelect, disabled }) {
-  const [query,       setQuery]       = useState('')
-  const [suggestions, setSuggestions] = useState([])
-  const [searching,   setSearching]   = useState(false)
-  const [focused,     setFocused]     = useState(false)
-  const [highlight,   setHighlight]   = useState(-1)
-  const debounceRef = useRef(null)
-  const inputRef    = useRef(null)
-  const dropRef     = useRef(null)
+// Autocomplete Search
+function SearchBox({ onSelect, disabled, placeholder }) {
+  const [q, setQ]           = useState('')
+  const [sugg, setSugg]     = useState([])
+  const [busy, setBusy]     = useState(false)
+  const [open, setOpen]     = useState(false)
+  const [hi, setHi]         = useState(-1)
+  const deb = useRef(null)
+  const inp = useRef(null)
+  const box = useRef(null)
 
-  // debounced search after 3 chars
   useEffect(() => {
-    if (query.length < 3) { setSuggestions([]); return }
-    clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(async () => {
-      setSearching(true)
-      const results = await searchTickers(query)
-      setSuggestions(results)
-      setSearching(false)
-      setHighlight(-1)
+    if (q.length < 3) { setSugg([]); return }
+    clearTimeout(deb.current)
+    deb.current = setTimeout(async () => {
+      setBusy(true)
+      const r = await searchTickers(q)
+      setSugg(r); setBusy(false); setHi(-1)
     }, 300)
-    return () => clearTimeout(debounceRef.current)
-  }, [query])
+    return () => clearTimeout(deb.current)
+  }, [q])
 
-  // close dropdown on outside click
   useEffect(() => {
-    function handler(e) {
-      if (!dropRef.current?.contains(e.target) && !inputRef.current?.contains(e.target)) {
-        setSuggestions([])
-        setFocused(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    const h = e => { if (!box.current?.contains(e.target)) { setSugg([]); setOpen(false) } }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  function pick(item) {
-    setQuery(item.symbol)
-    setSuggestions([])
-    setFocused(false)
-    onSelect(item.symbol)
-    inputRef.current?.blur()
-  }
+  const pick = item => { setQ(item.symbol); setSugg([]); setOpen(false); onSelect(item.symbol); inp.current?.blur() }
 
-  function onKeyDown(e) {
-    if (!suggestions.length) {
-      if (e.key === 'Enter' && query.trim()) onSelect(query.trim().toUpperCase())
-      return
-    }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(h + 1, suggestions.length - 1)) }
-    if (e.key === 'ArrowUp')   { e.preventDefault(); setHighlight(h => Math.max(h - 1, 0)) }
-    if (e.key === 'Enter')     { e.preventDefault(); if (highlight >= 0) pick(suggestions[highlight]); else onSelect(query.trim().toUpperCase()) }
-    if (e.key === 'Escape')    { setSuggestions([]); setFocused(false) }
+  const onKey = e => {
+    if (!sugg.length) { if (e.key==='Enter' && q.trim()) onSelect(q.trim().toUpperCase()); return }
+    if (e.key==='ArrowDown') { e.preventDefault(); setHi(h=>Math.min(h+1,sugg.length-1)) }
+    if (e.key==='ArrowUp')   { e.preventDefault(); setHi(h=>Math.max(h-1,0)) }
+    if (e.key==='Enter')     { e.preventDefault(); if(hi>=0) pick(sugg[hi]); else onSelect(q.trim().toUpperCase()) }
+    if (e.key==='Escape')    { setSugg([]); setOpen(false) }
   }
-
-  const showDrop = focused && (suggestions.length > 0 || (searching && query.length >= 3))
 
   return (
-    <div style={{ position:'relative', flex:1 }}>
+    <div ref={box} style={{ position:'relative', flex:1 }}>
       <div style={{ position:'relative' }}>
-        <input
-          ref={inputRef}
-          value={query}
-          disabled={disabled}
-          onChange={e => setQuery(e.target.value.toUpperCase())}
-          onFocus={() => setFocused(true)}
-          onKeyDown={onKeyDown}
-          placeholder="SEARCH TICKER OR COMPANY NAME — e.g. TSLA, Apple, Nvidia..."
-          style={{
-            width:'100%', background:'#020802', border:'1px solid #1a2a1a', borderRadius:4,
-            padding:'10px 40px 10px 13px', color:'#00ff90', fontSize:12, letterSpacing:'1px',
-            fontFamily:"'Space Mono',monospace", transition:'border-color .15s',
-          }}
-        />
-        {/* Search icon / spinner */}
-        <div style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', fontSize:14, color:'#2a4a2a' }}>
-          {searching ? '⟳' : '⌕'}
-        </div>
+        <span style={{ position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',fontSize:16,color:'#475569' }}>🔍</span>
+        <input ref={inp} value={q} disabled={disabled}
+          onChange={e=>{ setQ(e.target.value.toUpperCase()); setOpen(true) }}
+          onFocus={()=>setOpen(true)} onKeyDown={onKey}
+          placeholder={placeholder||"Search ticker or company — TSLA, Apple..."}
+          style={{ width:'100%',background:'rgba(15,23,42,0.9)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:12,padding:'12px 40px 12px 42px',color:'#e2e8f0',fontSize:13,fontFamily:"'DM Mono',monospace",transition:'all .2s',boxSizing:'border-box' }} />
+        {busy && <div style={{ position:'absolute',right:12,top:'50%',transform:'translateY(-50%)' }}><Spinner /></div>}
       </div>
-
-      {/* Dropdown */}
-      {showDrop && (
-        <div ref={dropRef} style={{
-          position:'absolute', top:'calc(100% + 4px)', left:0, right:0, zIndex:100,
-          background:'#060e06', border:'1px solid #1e2a1e', borderRadius:6,
-          overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.6)',
-        }}>
-          {searching && (
-            <div style={{ padding:'10px 14px', fontSize:10, color:'#2a4a2a', letterSpacing:'2px' }}>SEARCHING...</div>
-          )}
-          {!searching && suggestions.map((s, i) => (
-            <div key={s.symbol}
-              onMouseDown={() => pick(s)}
-              onMouseEnter={() => setHighlight(i)}
-              style={{
-                padding:'10px 14px', cursor:'pointer', display:'flex', alignItems:'center', gap:12,
-                background: i === highlight ? 'rgba(0,255,144,0.07)' : 'transparent',
-                borderBottom: i < suggestions.length - 1 ? '1px solid #0a1a0a' : 'none',
-                transition:'background .1s',
-              }}>
-              <span style={{ fontSize:12, fontWeight:700, color:'#00ff90', fontFamily:"'Space Mono',monospace", minWidth:60 }}>{s.symbol}</span>
-              <span style={{ fontSize:11, color:'#4a6a4a', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
+      {open && (sugg.length>0 || (busy&&q.length>=3)) && (
+        <div style={{ position:'absolute',top:'calc(100% + 6px)',left:0,right:0,zIndex:300,background:'#0f172a',border:'1px solid rgba(99,102,241,0.2)',borderRadius:12,overflow:'hidden',boxShadow:'0 16px 48px rgba(0,0,0,0.6)' }}>
+          {busy && <div style={{ padding:'12px 16px',fontSize:11,color:'#475569',letterSpacing:'2px' }}>SEARCHING...</div>}
+          {sugg.map((s,i) => (
+            <div key={s.symbol} onMouseDown={()=>pick(s)} onMouseEnter={()=>setHi(i)}
+              style={{ padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:12,background:i===hi?'rgba(99,102,241,0.1)':'transparent',borderBottom:i<sugg.length-1?'1px solid rgba(99,102,241,0.06)':'none',transition:'background .1s' }}>
+              <span style={{ fontSize:12,fontWeight:700,color:'#6366f1',fontFamily:"'DM Mono',monospace",minWidth:56 }}>{s.symbol}</span>
+              <span style={{ fontSize:12,color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{s.name}</span>
             </div>
           ))}
-          {!searching && query.length >= 3 && suggestions.length === 0 && (
-            <div style={{ padding:'10px 14px', fontSize:10, color:'#2a4a2a', letterSpacing:'1px' }}>No results for "{query}"</div>
+          {!busy && q.length>=3 && sugg.length===0 && (
+            <div style={{ padding:'12px 16px',fontSize:11,color:'#475569' }}>No results for "{q}"</div>
           )}
         </div>
       )}
@@ -248,8 +141,298 @@ function SearchBox({ onSelect, disabled }) {
   )
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
+// Step loader
+function StepLoader({ ticker }) {
+  const steps = ['Fetching live price','Scanning market signals','Evaluating fundamentals','Computing risk metrics','Generating recommendation']
+  const [step, setStep] = useState(0)
+  useEffect(() => { const t=setInterval(()=>setStep(s=>Math.min(s+1,steps.length-1)),900); return()=>clearInterval(t) },[])
+  return (
+    <div style={{ background:'rgba(99,102,241,0.05)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:16,padding:32,textAlign:'center' }}>
+      <div style={{ fontFamily:"'Syne',sans-serif",fontSize:14,fontWeight:700,color:'#6366f1',letterSpacing:'2px',marginBottom:24 }}>ANALYZING {ticker}</div>
+      <div style={{ display:'flex',flexDirection:'column',gap:12,maxWidth:280,margin:'0 auto',textAlign:'left' }}>
+        {steps.map((s,i) => (
+          <div key={i} style={{ display:'flex',alignItems:'center',gap:12 }}>
+            <div style={{ width:20,height:20,borderRadius:'50%',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',
+              background:i<step?'#10b981':i===step?'#6366f1':'rgba(99,102,241,0.1)',
+              border:`1px solid ${i<step?'#10b981':i===step?'#6366f1':'rgba(99,102,241,0.2)'}`,
+              transition:'all .3s',fontSize:10 }}>
+              {i<step?'✓':''}
+            </div>
+            <span style={{ fontSize:12,color:i<step?'#475569':i===step?'#e2e8f0':'#334155',transition:'color .3s' }}>{s}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// TradingView Chart
+function TradingChart({ symbol }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!symbol || !ref.current) return
+    ref.current.innerHTML = ''
+    const s = document.createElement('script')
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
+    s.async = true
+    s.innerHTML = JSON.stringify({
+      autosize: true, symbol, interval: 'D', timezone: 'Etc/UTC',
+      theme: 'dark', style: '1', locale: 'en',
+      backgroundColor: '#0a0e1a', gridColor: 'rgba(99,102,241,0.06)',
+      hide_top_toolbar: false, hide_legend: false, save_image: false,
+      calendar: false, hide_volume: false,
+    })
+    ref.current.appendChild(s)
+  }, [symbol])
+  if (!symbol) return (
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:400,color:'#334155',gap:12 }}>
+      <span style={{ fontSize:40 }}>📊</span>
+      <span style={{ fontSize:13 }}>Select a stock to view its chart</span>
+    </div>
+  )
+  return (
+    <div style={{ borderRadius:16,overflow:'hidden',border:'1px solid rgba(99,102,241,0.12)' }}>
+      <div className="tradingview-widget-container" ref={ref} style={{ height:420 }}>
+        <div className="tradingview-widget-container__widget" style={{ height:'100%' }} />
+      </div>
+    </div>
+  )
+}
+
+// News Feed
+function NewsFeed({ symbol }) {
+  const [articles, setArticles] = useState([])
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState(null)
+
+  useEffect(() => {
+    if (!symbol) return
+    setLoading(true); setError(null)
+    fetchNews(symbol)
+      .then(a => { setArticles(a); setLoading(false) })
+      .catch(e => { setError(e.message); setLoading(false) })
+  }, [symbol])
+
+  if (!symbol) return (
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:300,color:'#334155',gap:12 }}>
+      <span style={{ fontSize:40 }}>📰</span>
+      <span style={{ fontSize:13 }}>Select a stock to load news</span>
+    </div>
+  )
+  if (loading) return <div style={{ display:'flex',justifyContent:'center',padding:40 }}><Spinner /></div>
+  if (error)   return <div style={{ color:'#f43f5e',fontSize:12,padding:16 }}>⚠ {error}</div>
+  if (!articles.length) return <div style={{ color:'#475569',fontSize:13,padding:24,textAlign:'center' }}>No recent news found for {symbol}</div>
+
+  return (
+    <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
+      {articles.map((a,i) => (
+        <a key={a.id||i} href={a.url} target="_blank" rel="noreferrer" style={{ textDecoration:'none' }}>
+          <div style={{ background:'rgba(15,23,42,0.6)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:12,padding:'14px 16px',cursor:'pointer',transition:'all .2s' }}
+            onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(99,102,241,0.3)'}
+            onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(99,102,241,0.1)'}>
+            <div style={{ display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,marginBottom:6 }}>
+              <div style={{ fontSize:13,fontWeight:600,color:'#e2e8f0',lineHeight:1.4,flex:1 }}>{a.headline}</div>
+              <div style={{ fontSize:10,color:'#475569',whiteSpace:'nowrap',flexShrink:0 }}>{ago(a.datetime)}</div>
+            </div>
+            {a.summary && <div style={{ fontSize:11,color:'#64748b',lineHeight:1.6,marginBottom:6,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden' }}>{a.summary}</div>}
+            <div style={{ fontSize:10,color:'#6366f1',letterSpacing:'1px' }}>{a.source} ↗</div>
+          </div>
+        </a>
+      ))}
+    </div>
+  )
+}
+
+// Watchlist
+function WatchlistTab({ onAnalyze }) {
+  const [list,    setList]    = useState(() => lsGet('watchlist', []))
+  const [prices,  setPrices]  = useState({})
+  const [loading, setLoading] = useState({})
+  const [addSym,  setAddSym]  = useState('')
+
+  useEffect(() => {
+    list.forEach(sym => refreshPrice(sym))
+  }, [])
+
+  async function refreshPrice(sym) {
+    setLoading(l => ({ ...l, [sym]: true }))
+    try {
+      const d = await fetchPrice(sym)
+      setPrices(p => ({ ...p, [sym]: d }))
+    } catch (_) {}
+    setLoading(l => ({ ...l, [sym]: false }))
+  }
+
+  function addToList(sym) {
+    sym = sym.toUpperCase().trim()
+    if (!sym || list.includes(sym)) return
+    const next = [...list, sym]
+    setList(next); lsSet('watchlist', next)
+    refreshPrice(sym)
+    setAddSym('')
+  }
+
+  function removeFromList(sym) {
+    const next = list.filter(s => s !== sym)
+    setList(next); lsSet('watchlist', next)
+    setPrices(p => { const n={...p}; delete n[sym]; return n })
+  }
+
+  return (
+    <div>
+      <div style={{ display:'flex',gap:10,marginBottom:20 }}>
+        <SearchBox onSelect={addToList} placeholder="Add stock to watchlist..." />
+        <button onClick={()=>list.forEach(refreshPrice)} style={{ background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.2)',color:'#6366f1',padding:'0 16px',borderRadius:12,cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap' }}>
+          ↻ Refresh All
+        </button>
+      </div>
+
+      {list.length === 0 ? (
+        <div style={{ textAlign:'center',padding:'60px 20px',color:'#334155' }}>
+          <div style={{ fontSize:48,marginBottom:12 }}>📋</div>
+          <div style={{ fontSize:14,marginBottom:6 }}>Your watchlist is empty</div>
+          <div style={{ fontSize:12,color:'#1e293b' }}>Search for stocks above to add them</div>
+        </div>
+      ) : (
+        <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
+          {list.map(sym => {
+            const d = prices[sym]
+            const up = d ? d.change >= 0 : true
+            return (
+              <div key={sym} style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:14,padding:'16px 18px',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap' }}>
+                <div style={{ flex:1,minWidth:120 }}>
+                  <div style={{ fontSize:16,fontWeight:700,color:'#e2e8f0',fontFamily:"'DM Mono',monospace" }}>{sym}</div>
+                  {d && <div style={{ fontSize:11,color:'#475569',marginTop:2 }}>{d.name}</div>}
+                </div>
+                {loading[sym] ? <Spinner /> : d ? (
+                  <div style={{ textAlign:'right' }}>
+                    <div style={{ fontSize:20,fontWeight:700,color:'#e2e8f0',fontFamily:"'DM Mono',monospace" }}>{fmt(d.price)}</div>
+                    <div style={{ fontSize:12,fontWeight:600,color:up?'#10b981':'#f43f5e' }}>
+                      {up?'▲':'▼'} {up?'+':''}{d.change} ({up?'+':''}{d.changePct}%)
+                    </div>
+                  </div>
+                ) : <div style={{ fontSize:12,color:'#475569' }}>—</div>}
+                <div style={{ display:'flex',gap:8 }}>
+                  <button onClick={()=>refreshPrice(sym)} style={{ background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.15)',color:'#6366f1',padding:'6px 12px',borderRadius:8,cursor:'pointer',fontSize:11 }}>↻</button>
+                  <button onClick={()=>onAnalyze(sym)} style={{ background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.2)',color:'#10b981',padding:'6px 12px',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600 }}>ANALYZE</button>
+                  <button onClick={()=>removeFromList(sym)} style={{ background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.15)',color:'#f43f5e',padding:'6px 10px',borderRadius:8,cursor:'pointer',fontSize:11 }}>✕</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Alerts Tab
+function AlertsTab({ lastResult }) {
+  const [email,    setEmail]    = useState(() => lsGet('alert_email',''))
+  const [enabled,  setEnabled]  = useState(() => lsGet('alert_enabled', false))
+  const [sending,  setSending]  = useState(false)
+  const [status,   setStatus]   = useState(null)
+  const [history,  setHistory]  = useState(() => lsGet('alert_history', []))
+
+  function saveEmail(e) { setEmail(e); lsSet('alert_email', e) }
+  function toggleEnabled(v) { setEnabled(v); lsSet('alert_enabled', v) }
+
+  async function sendAlert(result) {
+    if (!email) { setStatus({ ok:false, msg:'Enter your email first.' }); return }
+    setSending(true); setStatus(null)
+    try {
+      const r = await fetch('/api/alert', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ to:email, ticker:result.ticker, decision:result.decision, confidence:result.confidence, entryPrice:result.entryPrice, stopLoss:result.stopLoss, targetPrice:result.targetPrice, reasoning:result.reasoning, livePrice:result.livePrice }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error)
+      const entry = { ticker:result.ticker, decision:result.decision, ts:new Date().toISOString() }
+      const next = [entry, ...history.slice(0,9)]
+      setHistory(next); lsSet('alert_history', next)
+      setStatus({ ok:true, msg:`Alert sent to ${email} ✓` })
+    } catch (e) {
+      setStatus({ ok:false, msg:'Failed: '+e.message })
+    }
+    setSending(false)
+  }
+
+  return (
+    <div>
+      {/* Setup */}
+      <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:16,padding:20,marginBottom:16 }}>
+        <SectionHead>EMAIL ALERT SETUP</SectionHead>
+        <div style={{ fontSize:12,color:'#64748b',marginBottom:16,lineHeight:1.7 }}>
+          Get instant email alerts when a BUY/SELL signal is generated. Uses <strong style={{color:'#6366f1'}}>Resend</strong> (free).
+          {' '}<a href="https://resend.com" target="_blank" rel="noreferrer" style={{color:'#6366f1'}}>Get free API key →</a>
+        </div>
+        <div style={{ display:'flex',gap:10,marginBottom:14,flexWrap:'wrap' }}>
+          <input value={email} onChange={e=>saveEmail(e.target.value)}
+            placeholder="your@email.com"
+            style={{ flex:1,minWidth:200,background:'rgba(15,23,42,0.9)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:10,padding:'11px 14px',color:'#e2e8f0',fontSize:13,fontFamily:"'DM Mono',monospace" }} />
+          <button onClick={()=>toggleEnabled(!enabled)} style={{
+            background:enabled?'rgba(16,185,129,0.15)':'rgba(99,102,241,0.1)',
+            border:`1px solid ${enabled?'rgba(16,185,129,0.3)':'rgba(99,102,241,0.2)'}`,
+            color:enabled?'#10b981':'#6366f1',
+            padding:'11px 18px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,whiteSpace:'nowrap',
+          }}>{enabled?'🔔 Alerts ON':'🔕 Alerts OFF'}</button>
+        </div>
+        <div style={{ fontSize:11,color:'#334155',lineHeight:1.6 }}>
+          ℹ️ Alerts also require <code style={{color:'#6366f1'}}>RESEND_API_KEY</code> in Vercel environment variables.
+          {' '}Sign up free at resend.com, create an API key, add it to Vercel.
+        </div>
+      </div>
+
+      {/* Send now */}
+      {lastResult && (
+        <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:16,padding:20,marginBottom:16 }}>
+          <SectionHead>SEND ALERT NOW</SectionHead>
+          <div style={{ display:'flex',alignItems:'center',gap:12,marginBottom:14,flexWrap:'wrap' }}>
+            <div>
+              <div style={{ fontSize:13,color:'#e2e8f0',fontWeight:600 }}>{lastResult.ticker} — {lastResult.decision}</div>
+              <div style={{ fontSize:11,color:'#475569' }}>Last analysis · {fmt(lastResult.livePrice)}</div>
+            </div>
+            <button onClick={()=>sendAlert(lastResult)} disabled={sending||!email}
+              style={{ marginLeft:'auto',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.3)',color:'#6366f1',padding:'10px 20px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,opacity:sending||!email?.0.5:1 }}>
+              {sending?'Sending...':'📧 Send Alert'}
+            </button>
+          </div>
+          {status && <div style={{ fontSize:12,color:status.ok?'#10b981':'#f43f5e',padding:'8px 12px',background:status.ok?'rgba(16,185,129,0.08)':'rgba(244,63,94,0.08)',borderRadius:8 }}>{status.msg}</div>}
+        </div>
+      )}
+
+      {/* History */}
+      {history.length > 0 && (
+        <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:16,padding:20 }}>
+          <SectionHead>ALERT HISTORY</SectionHead>
+          <div style={{ display:'flex',flexDirection:'column',gap:8 }}>
+            {history.map((h,i) => {
+              const ds = DECISION_STYLE[h.decision]||DECISION_STYLE.HOLD
+              return (
+                <div key={i} style={{ display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'rgba(15,23,42,0.5)',borderRadius:10 }}>
+                  <span style={{ fontSize:12,fontWeight:700,color:'#e2e8f0',fontFamily:"'DM Mono',monospace" }}>{h.ticker}</span>
+                  <Badge color={ds.badge}>{h.decision}</Badge>
+                  <span style={{ marginLeft:'auto',fontSize:11,color:'#475569' }}>{new Date(h.ts).toLocaleString()}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {!lastResult && history.length===0 && (
+        <div style={{ textAlign:'center',padding:'40px 20px',color:'#334155' }}>
+          <div style={{ fontSize:40,marginBottom:12 }}>🔔</div>
+          <div style={{ fontSize:13 }}>Run an analysis first, then send yourself an alert</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const [activeTab,   setActiveTab]   = useState('ANALYZE')
   const [sym,         setSym]         = useState('')
   const [context,     setContext]     = useState('')
   const [liveData,    setLiveData]    = useState(null)
@@ -261,389 +444,458 @@ export default function App() {
   const [history,     setHistory]     = useState([])
   const [time,        setTime]        = useState(new Date())
 
-  useEffect(() => {
-    const t = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(t)
-  }, [])
+  useEffect(() => { const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t) }, [])
 
-  // fetch live price whenever sym changes
   useEffect(() => {
     if (!sym) { setLiveData(null); setLiveError(null); return }
     let cancelled = false
     setLiveLoading(true); setLiveError(null); setLiveData(null)
     fetchPrice(sym)
-      .then(d  => { if (!cancelled) { setLiveData(d);  setLiveLoading(false) } })
-      .catch(e  => { if (!cancelled) { setLiveError(e.message); setLiveLoading(false) } })
+      .then(d  => { if(!cancelled){ setLiveData(d); setLiveLoading(false) } })
+      .catch(e  => { if(!cancelled){ setLiveError(e.message); setLiveLoading(false) } })
     return () => { cancelled = true }
   }, [sym])
 
   function selectSym(s) {
     const v = s.toUpperCase().trim()
     setSym(v); setResult(null); setError(null)
+    if (activeTab !== 'ANALYZE') setActiveTab('ANALYZE')
   }
 
   async function analyze() {
     if (!sym) return
     setLoading(true); setError(null); setResult(null)
-
-    // refresh price right before analysis
     let live = liveData
-    if (!live) {
-      try { live = await fetchPrice(sym); setLiveData(live) } catch (_) {}
-    }
+    if (!live) { try{ live=await fetchPrice(sym); setLiveData(live) }catch(_){} }
 
     const priceBlock = live
-      ? `LIVE MARKET DATA:
-- Current Price: $${live.price}
-- Change: ${live.change >= 0 ? '+' : ''}${live.change} (${live.changePct}%)
-- Range: $${live.low} - $${live.high}
-- Open: $${live.open} | Prev Close: $${live.prevClose}
-- Company: ${live.name}
-USE $${live.price} as the EXACT basis for all price calculations.`
+      ? `LIVE MARKET DATA:\n- Current Price: $${live.price}\n- Change: ${live.change>=0?'+':''}${live.change} (${live.changePct}%)\n- Range: $${live.low} - $${live.high}\n- Open: $${live.open} | Prev Close: $${live.prevClose}\n- Company: ${live.name}\nUSE $${live.price} as the EXACT basis for all price calculations.`
       : `Live price unavailable. Use your best knowledge of ${sym} current price range.`
 
     try {
       const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system: SYSTEM_PROMPT,
-          userMessage: `${priceBlock}\n\nAnalyze ${sym} stock. ${context ? 'Context: ' + context : ''}\nReturn ONLY the JSON object, nothing else.`,
-        }),
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ system:SYSTEM_PROMPT, userMessage:`${priceBlock}\n\nAnalyze ${sym} stock.${context?` Context: ${context}`:''}\nReturn ONLY the JSON object.` }),
       })
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error || `API error ${res.status}`)
-      }
-
+      if (!res.ok) { const b=await res.json().catch(()=>({})); throw new Error(b?.error||`Error ${res.status}`) }
       const data = await res.json()
-      const txt  = (data.text || '').trim()
-      const stripped = txt.replace(/```json/gi, '').replace(/```/g, '').trim()
-      const match = stripped.match(/\{[\s\S]*\}/)
-      if (!match) throw new Error('No JSON in response. Raw: ' + txt.slice(0, 120))
-      const parsed = JSON.parse(match[0])
-      const rec = { ...parsed, livePrice: live?.price ?? null, ts: new Date().toISOString() }
+      const txt  = (data.text||'').trim()
+      const m    = txt.replace(/```json/gi,'').replace(/```/g,'').trim().match(/\{[\s\S]*\}/)
+      if (!m) throw new Error('No JSON in response')
+      const parsed = JSON.parse(m[0])
+      const rec = { ...parsed, livePrice:live?.price??null, ts:new Date().toISOString() }
       setResult(rec)
-      setHistory(h => [rec, ...h.slice(0, 9)])
-    } catch (e) {
-      setError('Analysis failed: ' + e.message)
+      setHistory(h=>[rec,...h.slice(0,9)])
+    } catch(e) {
+      setError('Analysis failed: '+e.message)
     }
     setLoading(false)
   }
 
-  const dc       = result ? (DC[result.decision] || DC.HOLD) : null
-  const upside   = result?.livePrice && result?.targetPrice ? pctDiff(result.targetPrice, result.livePrice) : null
-  const downside = result?.livePrice && result?.stopLoss    ? pctDiff(result.stopLoss, result.livePrice)    : null
-  const rr       = upside && downside && parseFloat(downside) !== 0
-    ? (Math.abs(parseFloat(upside)) / Math.abs(parseFloat(downside))).toFixed(2) : null
+  const ds       = result ? (DECISION_STYLE[result.decision]||DECISION_STYLE.HOLD) : null
+  const upside   = result?.livePrice && result?.targetPrice ? pct(result.targetPrice,result.livePrice) : null
+  const downside = result?.livePrice && result?.stopLoss    ? pct(result.stopLoss,result.livePrice)    : null
+  const rr       = upside && downside && parseFloat(downside)!==0 ? (Math.abs(parseFloat(upside))/Math.abs(parseFloat(downside))).toFixed(2) : null
+
+  const TABS_CONFIG = [
+    { id:'ANALYZE',   icon:'🤖', label:'Analyze' },
+    { id:'CHART',     icon:'📊', label:'Chart' },
+    { id:'NEWS',      icon:'📰', label:'News' },
+    { id:'WATCHLIST', icon:'📋', label:'Watchlist' },
+    { id:'ALERTS',    icon:'🔔', label:'Alerts' },
+  ]
 
   return (
-    <div style={{ background:'#020802', minHeight:'100vh', fontFamily:"'Space Mono',monospace", color:'#e0ffe0' }}>
+    <div style={{ background:'#0a0e1a', minHeight:'100vh', minHeight:'100dvh', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@400;700;900&display=swap');
-        @keyframes blink  { 0%,100%{opacity:1} 50%{opacity:.2} }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500;700&display=swap');
+        @keyframes spin   { to { transform:rotate(360deg) } }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes blink  { 0%,100%{opacity:1} 50%{opacity:.3} }
+        @keyframes pulse  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
         *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
-        body { background:#020802; }
-        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#020802} ::-webkit-scrollbar-thumb{background:#1e3a1e;border-radius:2px}
-        input,button { font-family:'Space Mono',monospace; }
-        input::placeholder { color:#1a2a1a; }
-        input:focus { outline:none; border-color:#00ff90 !important; }
-        .chip { transition:all .15s; cursor:pointer; }
-        .chip:hover { border-color:rgba(0,255,144,0.5)!important; color:#00ff90!important; }
-        .abtn { transition:all .2s; }
-        .abtn:hover:not(:disabled) { background:#00ff90!important; color:#020802!important; cursor:pointer; }
-        .abtn:disabled { opacity:.3; cursor:not-allowed; }
-        .hbadge { transition:background .15s; cursor:pointer; }
-        .hbadge:hover { background:rgba(0,255,144,0.08)!important; }
+        body { background:#0a0e1a; overscroll-behavior:none; }
+        ::-webkit-scrollbar { width:4px; }
+        ::-webkit-scrollbar-track { background:#0a0e1a; }
+        ::-webkit-scrollbar-thumb { background:#1e293b; border-radius:2px; }
+        input, button, select { font-family:'DM Sans',sans-serif; }
+        input::placeholder { color:#334155; }
+        input:focus { outline:none; border-color:rgba(99,102,241,0.5) !important; box-shadow:0 0 0 3px rgba(99,102,241,0.08); }
+        .tab-btn:hover { background:rgba(99,102,241,0.08) !important; }
+        .chip:hover { border-color:rgba(99,102,241,0.4) !important; color:#6366f1 !important; }
+        .analyze-btn:hover:not(:disabled) { background:linear-gradient(135deg,#4f46e5,#6366f1) !important; transform:translateY(-1px); box-shadow:0 8px 24px rgba(99,102,241,0.3); }
+        .analyze-btn:disabled { opacity:.4; cursor:not-allowed; }
+        .analyze-btn { transition:all .2s; }
+        @media (max-width:640px) {
+          .desktop-only { display:none !important; }
+          .grid-2 { grid-template-columns:1fr !important; }
+          .stat-row { flex-wrap:wrap; }
+          .stat-row > * { min-width:calc(50% - 5px) !important; }
+        }
+        @media (min-width:641px) {
+          .mobile-bottom-nav { display:none !important; }
+          .desktop-tabs { display:flex !important; }
+        }
       `}</style>
 
-      {/* BG grid */}
-      <div style={{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none',
-        backgroundImage:'linear-gradient(rgba(0,255,144,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,144,.018) 1px,transparent 1px)',
-        backgroundSize:'44px 44px' }} />
+      {/* Ambient glow */}
+      <div style={{ position:'fixed',top:-200,left:'50%',transform:'translateX(-50%)',width:600,height:400,background:'radial-gradient(ellipse,rgba(99,102,241,0.08) 0%,transparent 70%)',pointerEvents:'none',zIndex:0 }} />
 
       {/* ── HEADER ── */}
-      <div style={{ borderBottom:'1px solid #0a1a0a', padding:'13px 28px', display:'flex', alignItems:'center',
-        justifyContent:'space-between', position:'sticky', top:0, zIndex:20,
-        background:'rgba(2,8,2,0.96)', backdropFilter:'blur(6px)' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <Dot pulse />
-          <span style={{ fontFamily:"'Orbitron',monospace", fontSize:15, fontWeight:900, letterSpacing:'4px', color:'#00ff90' }}>ALGO·TRADE·AI</span>
-          <span style={{ fontSize:9, color:'#00ff90', border:'1px solid rgba(0,255,144,.2)', padding:'2px 8px', borderRadius:3, background:'rgba(0,255,144,.05)', letterSpacing:'1px' }}>LIVE DATA</span>
-        </div>
-        <div style={{ fontSize:10, color:'#1e3a1e', fontFamily:"'Orbitron',monospace", letterSpacing:'2px' }}>
-          {time.toLocaleTimeString('en-US', { hour12:false })} EST
-        </div>
-      </div>
+      <header style={{ borderBottom:'1px solid rgba(99,102,241,0.1)',padding:'0 20px',position:'sticky',top:0,zIndex:100,background:'rgba(10,14,26,0.95)',backdropFilter:'blur(12px)' }}>
+        <div style={{ maxWidth:1100,margin:'0 auto',display:'flex',alignItems:'center',height:60,gap:16 }}>
+          {/* Logo */}
+          <div style={{ display:'flex',alignItems:'center',gap:10,flexShrink:0 }}>
+            <div style={{ width:32,height:32,background:'linear-gradient(135deg,#4f46e5,#6366f1)',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16 }}>📈</div>
+            <span style={{ fontFamily:"'Syne',sans-serif",fontSize:17,fontWeight:800,color:'#e2e8f0',letterSpacing:'-0.5px' }}>AlgoTrade<span style={{color:'#6366f1'}}>AI</span></span>
+          </div>
 
-      <div style={{ position:'relative', zIndex:10, padding:'20px 24px', maxWidth:1160, margin:'0 auto' }}>
-
-        {/* ── TERMINAL ── */}
-        <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:'18px 20px', marginBottom:14 }}>
-          <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ STOCK ANALYSIS TERMINAL</div>
-
-          {/* Popular chips */}
-          <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:14 }}>
-            {POPULAR.map(t => (
-              <button key={t} className="chip"
-                onClick={() => selectSym(t)}
-                style={{
-                  background: sym === t ? 'rgba(0,255,144,.07)' : 'transparent',
-                  border: `1px solid ${sym === t ? '#00ff90' : '#1a2a1a'}`,
-                  color: sym === t ? '#00ff90' : '#3a5a3a',
-                  padding:'3px 10px', borderRadius:3, fontSize:11,
-                  fontWeight: sym === t ? 700 : 400, letterSpacing:'1px',
-                }}>{t}</button>
+          {/* Desktop tabs */}
+          <nav className="desktop-tabs" style={{ display:'none',gap:4,flex:1,justifyContent:'center' }}>
+            {TABS_CONFIG.map(t => (
+              <button key={t.id} className="tab-btn" onClick={()=>setActiveTab(t.id)} style={{
+                background:activeTab===t.id?'rgba(99,102,241,0.12)':'transparent',
+                border:`1px solid ${activeTab===t.id?'rgba(99,102,241,0.25)':'transparent'}`,
+                color:activeTab===t.id?'#6366f1':'#64748b',
+                padding:'7px 14px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:600,
+                display:'flex',alignItems:'center',gap:6,transition:'all .15s',
+              }}><span>{t.icon}</span>{t.label}</button>
             ))}
-          </div>
+          </nav>
 
-          {/* Search + Analyze */}
-          <div style={{ display:'flex', gap:8, alignItems:'flex-start' }}>
-            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
-              <SearchBox onSelect={selectSym} disabled={loading} />
-              <input value={context} onChange={e => setContext(e.target.value)}
-                placeholder="Optional context — e.g. earnings beat, Fed held rates, tariff news..."
-                style={{ background:'#020802', border:'1px solid #0a1a0a', borderRadius:4,
-                  padding:'8px 13px', color:'#4a6a4a', fontSize:11, width:'100%' }} />
-            </div>
-            <button className="abtn" onClick={analyze} disabled={loading || !sym}
-              style={{ background:'transparent', border:'1px solid #00ff90', color:'#00ff90',
-                padding:'10px 24px', borderRadius:4, fontSize:12, fontWeight:700, letterSpacing:'2px' }}>
-              {loading ? '···' : 'ANALYZE ▸'}
-            </button>
+          {/* Clock */}
+          <div style={{ marginLeft:'auto',fontSize:11,color:'#334155',fontFamily:"'DM Mono',monospace",flexShrink:0 }}>
+            {time.toLocaleTimeString('en-US',{hour12:false})}
           </div>
-
-          {/* Selected symbol badge */}
-          {sym && (
-            <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:8 }}>
-              <span style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px' }}>SELECTED:</span>
-              <span style={{ fontSize:12, fontWeight:700, color:'#00ff90', fontFamily:"'Orbitron',monospace" }}>{sym}</span>
-              {liveData && <span style={{ fontSize:10, color:'#4a6a4a' }}>· {liveData.name}</span>}
-              <button onClick={() => { setSym(''); setLiveData(null); setResult(null); setError(null) }}
-                style={{ marginLeft:'auto', background:'transparent', border:'1px solid #1a2a1a', color:'#2a4a2a',
-                  padding:'2px 8px', borderRadius:3, fontSize:9, cursor:'pointer' }}>CLEAR ✕</button>
-            </div>
-          )}
+          <div style={{ display:'flex',alignItems:'center',gap:6,flexShrink:0 }}>
+            <div style={{ width:6,height:6,borderRadius:'50%',background:'#10b981',animation:'blink 2s infinite' }} />
+            <span style={{ fontSize:10,color:'#10b981',letterSpacing:'1px',fontWeight:600 }}>LIVE</span>
+          </div>
         </div>
+      </header>
 
-        {/* ── LIVE PRICE BAR ── */}
-        {sym && (
-          <div style={{ marginBottom:14 }}>
-            {liveLoading && (
-              <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:'12px 20px', display:'flex', gap:10, alignItems:'center' }}>
-                <Dot color="#ffd700" pulse />
-                <span style={{ fontSize:10, color:'#ffd700', letterSpacing:'2px' }}>FETCHING LIVE PRICE · {sym}...</span>
+      {/* ── MAIN ── */}
+      <main style={{ maxWidth:1100,margin:'0 auto',padding:'20px 16px 100px',position:'relative',zIndex:1 }}>
+
+        {/* ════ ANALYZE TAB ════ */}
+        {activeTab === 'ANALYZE' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+
+            {/* Search + Popular */}
+            <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:18,padding:'18px 18px',marginBottom:16,backdropFilter:'blur(8px)' }}>
+              <div style={{ fontSize:10,color:'#6366f1',letterSpacing:'3px',fontWeight:700,marginBottom:14 }}>STOCK ANALYSIS TERMINAL</div>
+
+              <div style={{ display:'flex',flexWrap:'wrap',gap:6,marginBottom:14 }}>
+                {POPULAR.map(t => (
+                  <button key={t} className="chip" onClick={()=>selectSym(t)} style={{
+                    background:sym===t?'rgba(99,102,241,0.12)':'transparent',
+                    border:`1px solid ${sym===t?'rgba(99,102,241,0.3)':'rgba(99,102,241,0.08)'}`,
+                    color:sym===t?'#6366f1':'#475569',
+                    padding:'4px 12px',borderRadius:20,cursor:'pointer',fontSize:11,fontWeight:600,
+                    letterSpacing:'0.5px',transition:'all .15s',
+                  }}>{t}</button>
+                ))}
               </div>
-            )}
-            {liveError && !liveLoading && (
-              <div style={{ background:'rgba(255,0,56,.05)', border:'1px solid rgba(255,0,56,.2)', borderRadius:8, padding:'10px 18px', fontSize:10, color:'#ff4060' }}>
-                ⚠ {liveError}
+
+              <div style={{ display:'flex',gap:10,alignItems:'flex-start',flexWrap:'wrap' }}>
+                <div style={{ flex:1,minWidth:200,display:'flex',flexDirection:'column',gap:8 }}>
+                  <SearchBox onSelect={selectSym} disabled={loading} />
+                  <input value={context} onChange={e=>setContext(e.target.value)}
+                    placeholder="Optional context — earnings beat, Fed held rates, tariff news..."
+                    style={{ background:'rgba(15,23,42,0.9)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:12,padding:'11px 14px',color:'#64748b',fontSize:12,width:'100%' }} />
+                </div>
+                <button className="analyze-btn" onClick={analyze} disabled={loading||!sym} style={{
+                  background:'linear-gradient(135deg,#4f46e5,#7c3aed)',border:'none',color:'#fff',
+                  padding:'12px 24px',borderRadius:12,fontSize:13,fontWeight:700,letterSpacing:'0.5px',cursor:'pointer',
+                  boxShadow:'0 4px 16px rgba(99,102,241,0.25)',alignSelf:'flex-start',
+                }}>{loading?'Analyzing...':'Analyze ▸'}</button>
               </div>
-            )}
-            {liveData && !liveLoading && (() => {
-              const up = liveData.change >= 0
-              return (
-                <div style={{ background:'#060e06', border:`1px solid ${up ? 'rgba(0,255,144,.15)' : 'rgba(255,64,96,.15)'}`,
-                  borderRadius:8, padding:'14px 20px', display:'flex', alignItems:'center',
-                  justifyContent:'space-between', flexWrap:'wrap', gap:14 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:14 }}>
-                    <Dot pulse />
-                    <div>
-                      <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:3 }}>
-                        LIVE PRICE · {liveData.name}{liveData.exchange ? ` · ${liveData.exchange}` : ''}
+
+              {sym && (
+                <div style={{ marginTop:12,display:'flex',alignItems:'center',gap:8 }}>
+                  <div style={{ width:6,height:6,borderRadius:'50%',background:'#6366f1',animation:'blink 2s infinite' }} />
+                  <span style={{ fontSize:11,color:'#6366f1',fontFamily:"'DM Mono',monospace",fontWeight:600 }}>{sym}</span>
+                  {liveData && <span style={{ fontSize:11,color:'#475569' }}>· {liveData.name}</span>}
+                  <button onClick={()=>{setSym('');setLiveData(null);setResult(null);setError(null)}}
+                    style={{ marginLeft:'auto',background:'transparent',border:'1px solid rgba(99,102,241,0.1)',color:'#475569',padding:'3px 10px',borderRadius:8,cursor:'pointer',fontSize:11 }}>Clear ✕</button>
+                </div>
+              )}
+            </div>
+
+            {/* Live price bar */}
+            {sym && (
+              <div style={{ marginBottom:16 }}>
+                {liveLoading && (
+                  <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:14,padding:'14px 18px',display:'flex',gap:12,alignItems:'center' }}>
+                    <Spinner /><span style={{ fontSize:12,color:'#6366f1' }}>Fetching live price for {sym}...</span>
+                  </div>
+                )}
+                {liveError && !liveLoading && (
+                  <div style={{ background:'rgba(244,63,94,0.05)',border:'1px solid rgba(244,63,94,0.2)',borderRadius:14,padding:'12px 18px',fontSize:12,color:'#f43f5e' }}>⚠ {liveError}</div>
+                )}
+                {liveData && !liveLoading && (
+                  <div style={{ background:'rgba(15,23,42,0.8)',border:`1px solid ${liveData.change>=0?'rgba(16,185,129,0.2)':'rgba(244,63,94,0.2)'}`,borderRadius:14,padding:'16px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:14,backdropFilter:'blur(8px)' }}>
+                    <div style={{ display:'flex',alignItems:'center',gap:14 }}>
+                      <div style={{ width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,rgba(99,102,241,0.15),rgba(99,102,241,0.05))',border:'1px solid rgba(99,102,241,0.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18 }}>📈</div>
+                      <div>
+                        <div style={{ fontSize:10,color:'#475569',letterSpacing:'1px',marginBottom:3 }}>{liveData.name}</div>
+                        <div style={{ display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap' }}>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:24,fontWeight:700,color:'#e2e8f0' }}>{fmt(liveData.price)}</span>
+                          <span style={{ fontSize:13,fontWeight:600,color:liveData.change>=0?'#10b981':'#f43f5e' }}>
+                            {liveData.change>=0?'▲':'▼'} {liveData.change>=0?'+':''}{liveData.change} ({liveData.change>=0?'+':''}{liveData.changePct}%)
+                          </span>
+                        </div>
                       </div>
-                      <div style={{ display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap' }}>
-                        <span style={{ fontFamily:"'Orbitron',monospace", fontSize:26, fontWeight:900, color:'#e0ffe0' }}>
-                          {fmt(liveData.price)}
-                        </span>
-                        <span style={{ fontSize:13, fontWeight:700, color: up ? '#00ff90' : '#ff4060' }}>
-                          {up ? '▲' : '▼'} {up?'+':''}{liveData.change} ({up?'+':''}{liveData.changePct}%)
-                        </span>
+                    </div>
+                    <div style={{ display:'flex',gap:16,flexWrap:'wrap' }}>
+                      {[['OPEN',fmt(liveData.open)],['HIGH',fmt(liveData.high),'#10b981'],['LOW',fmt(liveData.low),'#f43f5e'],['PREV',fmt(liveData.prevClose)]].map(([l,v,c])=>(
+                        <div key={l}>
+                          <div style={{ fontSize:9,color:'#334155',letterSpacing:'1px',marginBottom:2 }}>{l}</div>
+                          <div style={{ fontSize:12,fontWeight:600,color:c||'#64748b',fontFamily:"'DM Mono',monospace" }}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Loader */}
+            {loading && <StepLoader ticker={sym} />}
+
+            {/* Error */}
+            {error && !loading && (
+              <div style={{ background:'rgba(244,63,94,0.05)',border:'1px solid rgba(244,63,94,0.2)',borderRadius:14,padding:'14px 18px',marginBottom:16,color:'#f43f5e',fontSize:12 }}>⚠ {error}</div>
+            )}
+
+            {/* ── RESULT ── */}
+            {result && !loading && ds && (
+              <div style={{ animation:'fadeUp .4s ease' }}>
+                {result.livePrice && (
+                  <div style={{ display:'flex',alignItems:'center',gap:6,fontSize:11,color:'rgba(99,102,241,0.5)',marginBottom:12 }}>
+                    <div style={{ width:5,height:5,borderRadius:'50%',background:'#6366f1' }} />
+                    Analysis based on live price {fmt(result.livePrice)} · {new Date(result.ts).toLocaleTimeString()}
+                  </div>
+                )}
+
+                {/* Decision banner */}
+                <div style={{ background:ds.bg,border:`1px solid ${ds.border}`,borderRadius:18,padding:'22px 24px',marginBottom:14,boxShadow:ds.glow,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:14 }}>
+                  <div>
+                    <div style={{ fontSize:10,color:ds.text,letterSpacing:'3px',marginBottom:6,opacity:.7 }}>AI TRADING SIGNAL</div>
+                    <div style={{ display:'flex',alignItems:'center',gap:14,flexWrap:'wrap' }}>
+                      <span style={{ fontFamily:"'Syne',sans-serif",fontSize:42,fontWeight:800,color:ds.text,lineHeight:1 }}>{result.decision}</span>
+                      <div>
+                        <div style={{ fontSize:20,color:'#e2e8f0',fontWeight:700,fontFamily:"'DM Mono',monospace" }}>{result.ticker}</div>
+                        <div style={{ fontSize:12,color:'#64748b',marginTop:2 }}>{result.companyName}</div>
                       </div>
                     </div>
                   </div>
-                  <div style={{ display:'flex', gap:20, flexWrap:'wrap' }}>
-                    {[['OPEN',fmt(liveData.open)],['HIGH',fmt(liveData.high),'rgba(0,255,144,.55)'],
-                      ['LOW',fmt(liveData.low),'rgba(255,64,96,.55)'],['PREV CLOSE',fmt(liveData.prevClose)]].map(([l,v,c])=>(
-                      <div key={l}>
-                        <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'1px', marginBottom:2 }}>{l}</div>
-                        <div style={{ fontSize:12, fontWeight:700, color:c||'#6a8a6a', fontFamily:"'Space Mono',monospace" }}>{v}</div>
+                  <div style={{ textAlign:'right' }}>
+                    <div style={{ fontSize:9,color:'#475569',letterSpacing:'2px',marginBottom:6 }}>CONFIDENCE</div>
+                    <div style={{ fontSize:20,fontWeight:700,color:ds.text,fontFamily:"'Syne',sans-serif" }}>{(result.confidence||'').toUpperCase()}</div>
+                    <div style={{ display:'flex',gap:4,justifyContent:'flex-end',marginTop:8 }}>
+                      {[0,1,2].map(i=><div key={i} style={{ width:28,height:5,borderRadius:3,background:i<(result.confidence==='High'?3:result.confidence==='Medium'?2:1)?ds.text:'rgba(255,255,255,0.06)',transition:'background .3s' }} />)}
+                    </div>
+                    <div style={{ fontSize:10,color:'#475569',marginTop:6 }}>{result.timeHorizon}</div>
+                  </div>
+                </div>
+
+                {/* Price stat boxes */}
+                <div className="stat-row" style={{ display:'flex',gap:10,marginBottom:14,flexWrap:'wrap' }}>
+                  <StatBox label="LIVE PRICE"   value={fmt(result.livePrice)}   color="#e2e8f0" sub="real-time" icon="🔴" />
+                  <StatBox label="ENTRY"         value={fmt(result.entryPrice)}  color="#10b981"
+                    sub={result.livePrice&&result.entryPrice?`${Number(pct(result.entryPrice,result.livePrice))>0?'+':''}${pct(result.entryPrice,result.livePrice)}% from live`:null} icon="🎯" />
+                  <StatBox label="STOP LOSS"     value={fmt(result.stopLoss)}    color="#f43f5e" sub={downside?`${downside}% risk`:null} icon="🛑" />
+                  <StatBox label="TARGET"        value={fmt(result.targetPrice)} color="#10b981" sub={upside?`+${upside}% upside`:null} icon="🏹" />
+                  <StatBox label="RISK"          value={(result.riskLevel||'').toUpperCase()} color={RISK_COLOR[result.riskLevel]||'#f59e0b'} sub="portfolio exposure" icon="⚡" />
+                </div>
+
+                {/* R/R row */}
+                {upside && downside && rr && (
+                  <div className="stat-row" style={{ display:'flex',gap:10,marginBottom:14 }}>
+                    {[
+                      ['UPSIDE POTENTIAL',`+${upside}%`,'#10b981','rgba(16,185,129,0.05)','rgba(16,185,129,0.15)'],
+                      ['MAX DOWNSIDE',`${downside}%`,'#f43f5e','rgba(244,63,94,0.05)','rgba(244,63,94,0.15)'],
+                      ['RISK / REWARD',`${rr}x`,'#f59e0b','rgba(245,158,11,0.05)','rgba(245,158,11,0.15)'],
+                    ].map(([l,v,c,bg,bd])=>(
+                      <div key={l} style={{ background:bg,border:`1px solid ${bd}`,borderRadius:12,padding:'12px 16px',flex:1,minWidth:100 }}>
+                        <div style={{ fontSize:9,color:'#475569',letterSpacing:'2px',marginBottom:5 }}>{l}</div>
+                        <div style={{ fontSize:20,fontWeight:700,color:c,fontFamily:"'DM Mono',monospace" }}>{v}</div>
                       </div>
                     ))}
                   </div>
+                )}
+
+                {/* Reasoning + Signals */}
+                <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14 }}>
+                  <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:16,padding:20 }}>
+                    <SectionHead>ANALYSIS REASONING</SectionHead>
+                    <p style={{ fontSize:13,color:'#64748b',lineHeight:1.8 }}>{result.reasoning}</p>
+                  </div>
+                  <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:16,padding:20 }}>
+                    <SectionHead>KEY SIGNALS</SectionHead>
+                    {result.signals && Object.entries({
+                      '📰 News':result.signals.newsCatalyst,
+                      '👔 Analysts':result.signals.analystSentiment,
+                      '💰 Financials':result.signals.financialMetrics,
+                      '📊 Technical':result.signals.technicalIndicators,
+                      '🏦 Institutional':result.signals.institutionalActivity,
+                    }).map(([k,v])=>v?(
+                      <div key={k} style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:10,color:'#475569',letterSpacing:'1px',marginBottom:3 }}>{k}</div>
+                        <div style={{ fontSize:12,color:'#64748b',lineHeight:1.5 }}>{String(v)}</div>
+                      </div>
+                    ):null)}
+                  </div>
                 </div>
-              )
-            })()}
-          </div>
-        )}
 
-        {/* ── LOADER ── */}
-        {loading && <StepLoader ticker={sym} />}
+                {/* Risks + Steps */}
+                <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14 }}>
+                  <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:16,padding:20 }}>
+                    <SectionHead>KEY RISKS</SectionHead>
+                    {Array.isArray(result.keyRisks) && result.keyRisks.map((r,i)=>(
+                      <div key={i} style={{ display:'flex',gap:10,marginBottom:10,alignItems:'flex-start' }}>
+                        <span style={{ color:'#f43f5e',fontSize:16,lineHeight:1,flexShrink:0 }}>▸</span>
+                        <span style={{ fontSize:12,color:'#64748b',lineHeight:1.5 }}>{r}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.1)',borderRadius:16,padding:20 }}>
+                    <SectionHead>TRADING STEPS</SectionHead>
+                    {[
+                      `1. Verify ${fmt(result.livePrice||result.entryPrice)} in your broker`,
+                      `2. Set stop loss: ${fmt(result.stopLoss)}`,
+                      `3. Enter near: ${fmt(result.entryPrice)}`,
+                      `4. Target: ${fmt(result.targetPrice)}`,
+                      '5. Monitor news daily',
+                    ].map((s,i)=>(
+                      <div key={i} style={{ fontSize:12,color:'#64748b',marginBottom:9,lineHeight:1.5,display:'flex',gap:8,alignItems:'flex-start' }}>
+                        <span style={{ color:'#6366f1',flexShrink:0 }}>{i+1}.</span>
+                        <span>{s.replace(/^\d+\. /,'')}</span>
+                      </div>
+                    ))}
+                    <div style={{ marginTop:12,paddingTop:12,borderTop:'1px solid rgba(99,102,241,0.08)',fontSize:11,color:'#334155' }}>
+                      Sector: <span style={{color:'#6366f1'}}>{result.sectorAllocation}</span>
+                    </div>
+                  </div>
+                </div>
 
-        {/* ── ERROR ── */}
-        {error && !loading && (
-          <div style={{ background:'rgba(255,0,56,.05)', border:'1px solid rgba(255,0,56,.2)', borderRadius:8, padding:'12px 18px', marginBottom:14, color:'#ff4060', fontSize:11 }}>
-            ⚠ {error}
-          </div>
-        )}
-
-        {/* ══════════════════════════════════
-            RESULT
-        ══════════════════════════════════ */}
-        {result && !loading && dc && (
-          <div style={{ animation:'fadeIn .4s ease' }}>
-
-            {result.livePrice && (
-              <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:10, color:'rgba(0,255,144,.35)', marginBottom:10 }}>
-                <Dot /> ANALYSIS BASED ON LIVE PRICE {fmt(result.livePrice)} · {new Date(result.ts).toLocaleTimeString()}
+                {/* Quick actions */}
+                <div style={{ display:'flex',gap:10,flexWrap:'wrap' }}>
+                  <button onClick={()=>setActiveTab('CHART')} style={{ background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.2)',color:'#6366f1',padding:'10px 18px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:600,flex:1,minWidth:120 }}>📊 View Chart</button>
+                  <button onClick={()=>setActiveTab('NEWS')}  style={{ background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.2)',color:'#6366f1',padding:'10px 18px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:600,flex:1,minWidth:120 }}>📰 Read News</button>
+                  <button onClick={()=>setActiveTab('ALERTS')} style={{ background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.2)',color:'#10b981',padding:'10px 18px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:600,flex:1,minWidth:120 }}>🔔 Send Alert</button>
+                </div>
               </div>
             )}
 
-            {/* Decision banner */}
-            <div style={{ background:dc.bg, border:`1px solid ${dc.border}`, borderRadius:8, padding:'18px 24px', marginBottom:12,
-              display:'flex', alignItems:'center', justifyContent:'space-between', boxShadow:dc.glow, flexWrap:'wrap', gap:14 }}>
-              <div>
-                <div style={{ fontSize:9, color:dc.text, letterSpacing:'3px', marginBottom:4, opacity:.6 }}>TRADING SIGNAL</div>
-                <div style={{ display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap' }}>
-                  <span style={{ fontFamily:"'Orbitron',monospace", fontSize:34, fontWeight:900, color:dc.text }}>{result.decision}</span>
-                  <span style={{ fontSize:20, color:'#e0ffe0', fontWeight:700 }}>{result.ticker}</span>
-                  <span style={{ fontSize:12, color:'#4a6a4a' }}>{result.companyName}</span>
+            {/* History */}
+            {history.length > 0 && !loading && (
+              <div style={{ marginTop:20 }}>
+                <div style={{ fontSize:10,color:'#334155',letterSpacing:'2px',marginBottom:10 }}>RECENT ANALYSES</div>
+                <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
+                  {history.map((h,i)=>{
+                    const s = DECISION_STYLE[h.decision]||DECISION_STYLE.HOLD
+                    return (
+                      <button key={i} onClick={()=>setResult(h)} style={{
+                        background:s.bg,border:`1px solid ${s.border}`,borderRadius:10,padding:'7px 14px',
+                        cursor:'pointer',display:'flex',gap:8,alignItems:'center',transition:'all .15s',
+                      }}>
+                        <span style={{ fontSize:12,fontWeight:700,color:'#e2e8f0',fontFamily:"'DM Mono',monospace" }}>{h.ticker}</span>
+                        {h.livePrice!=null && <span style={{ fontSize:11,color:'#475569',fontFamily:"'DM Mono',monospace" }}>{fmt(h.livePrice)}</span>}
+                        <Badge color={s.badge}>{h.decision}</Badge>
+                        <span style={{ fontSize:10,color:'#334155' }}>{new Date(h.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              </div>
-              <div style={{ textAlign:'right' }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:4 }}>CONFIDENCE</div>
-                <div style={{ fontSize:19, fontWeight:700, color:dc.text, fontFamily:"'Orbitron',monospace" }}>
-                  {(result.confidence||'').toUpperCase()}
-                </div>
-                <div style={{ display:'flex', gap:4, justifyContent:'flex-end', marginTop:5 }}>
-                  {[0,1,2].map(i=>(
-                    <div key={i} style={{ width:26, height:4, borderRadius:2,
-                      background: i<(result.confidence==='High'?3:result.confidence==='Medium'?2:1) ? dc.text : '#0a1a0a' }} />
-                  ))}
-                </div>
-                <div style={{ fontSize:9, color:'#2a4a2a', marginTop:5 }}>{result.timeHorizon}</div>
-              </div>
-            </div>
-
-            {/* Price boxes */}
-            <div style={{ display:'flex', gap:10, marginBottom:12, flexWrap:'wrap' }}>
-              <PBox label="LIVE PRICE"   value={fmt(result.livePrice)}   color="#e0ffe0" sub="real-time" />
-              <PBox label="ENTRY PRICE"  value={fmt(result.entryPrice)}  color="#aaffcc"
-                sub={result.livePrice&&result.entryPrice ? `${Number(pctDiff(result.entryPrice,result.livePrice))>0?'+':''}${pctDiff(result.entryPrice,result.livePrice)}% from live` : null} />
-              <PBox label="STOP LOSS"    value={fmt(result.stopLoss)}    color="#ff4060" sub={downside?`${downside}% downside`:null} />
-              <PBox label="TARGET PRICE" value={fmt(result.targetPrice)} color="#00ff90" sub={upside?`+${upside}% upside`:null} />
-              <div style={{ background:'#060e06', border:'1px solid #1e2a1e', borderRadius:6, padding:'11px 14px', flex:1, minWidth:110 }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:5 }}>RISK LEVEL</div>
-                <div style={{ fontSize:18, fontWeight:700, color:RC[result.riskLevel]||'#ffd700', fontFamily:"'Space Mono',monospace" }}>
-                  {(result.riskLevel||'').toUpperCase()}
-                </div>
-                <div style={{ fontSize:9, color:'#1e3a1e', marginTop:3 }}>MAX 5-10% allocation</div>
-              </div>
-            </div>
-
-            {/* R/R row */}
-            {upside && downside && rr && (
-              <div style={{ display:'flex', gap:10, marginBottom:12, flexWrap:'wrap' }}>
-                {[
-                  ['UPSIDE POTENTIAL',`+${upside}%`,'#00ff90','rgba(0,255,144,.04)','rgba(0,255,144,.14)'],
-                  ['MAX DOWNSIDE',`${downside}%`,'#ff4060','rgba(255,0,56,.04)','rgba(255,0,56,.14)'],
-                  ['RISK / REWARD',`${rr}x`,'#ffd700','rgba(255,215,0,.04)','rgba(255,215,0,.14)'],
-                ].map(([l,v,c,bg,bd])=>(
-                  <div key={l} style={{ background:bg, border:`1px solid ${bd}`, borderRadius:6, padding:'10px 18px', flex:1, minWidth:130 }}>
-                    <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:4 }}>{l}</div>
-                    <div style={{ fontSize:20, fontWeight:700, color:c, fontFamily:"'Orbitron',monospace" }}>{v}</div>
-                  </div>
-                ))}
               </div>
             )}
 
-            {/* Reasoning + Signals */}
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:12, marginBottom:12 }}>
-              <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ ANALYSIS REASONING</div>
-                <p style={{ fontSize:12, color:'#6a8a6a', lineHeight:1.85 }}>{result.reasoning}</p>
+            {/* Empty state */}
+            {!result && !loading && !error && !sym && (
+              <div style={{ textAlign:'center',padding:'60px 20px',border:'1px dashed rgba(99,102,241,0.1)',borderRadius:18 }}>
+                <div style={{ fontSize:56,marginBottom:16 }}>📈</div>
+                <div style={{ fontFamily:"'Syne',sans-serif",fontSize:20,fontWeight:700,color:'#e2e8f0',marginBottom:8 }}>AI Stock Trading Agent</div>
+                <div style={{ fontSize:13,color:'#475569',lineHeight:1.7 }}>
+                  Search for any stock or select from popular tickers above.<br/>
+                  Get AI-powered BUY / SELL / HOLD signals with live prices.
+                </div>
               </div>
-              <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ KEY SIGNALS</div>
-                {result.signals && Object.entries({
-                  'News Catalyst':result.signals.newsCatalyst,
-                  'Analyst Sentiment':result.signals.analystSentiment,
-                  'Financial Metrics':result.signals.financialMetrics,
-                  'Technical Indicators':result.signals.technicalIndicators,
-                  'Institutional Activity':result.signals.institutionalActivity,
-                }).map(([k,v]) => v ? (
-                  <div key={k} style={{ marginBottom:11 }}>
-                    <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'2px', marginBottom:3 }}>{k.toUpperCase()}</div>
-                    <div style={{ fontSize:11, color:'#6a8a6a', lineHeight:1.6 }}>{String(v)}</div>
-                  </div>
-                ) : null)}
-              </div>
-            </div>
+            )}
+          </div>
+        )}
 
-            {/* Risks + Steps */}
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:12, marginBottom:16 }}>
-              <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ KEY RISKS</div>
-                {Array.isArray(result.keyRisks) && result.keyRisks.map((r,i)=>(
-                  <div key={i} style={{ display:'flex', gap:8, alignItems:'flex-start', marginBottom:9 }}>
-                    <span style={{ color:'#ff4060', fontSize:9, marginTop:2, flexShrink:0 }}>▸</span>
-                    <span style={{ fontSize:11, color:'#6a4a4a', lineHeight:1.5 }}>{r}</span>
-                  </div>
-                ))}
+        {/* ════ CHART TAB ════ */}
+        {activeTab === 'CHART' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+            <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:18,padding:18,marginBottom:16 }}>
+              <SectionHead>PRICE CHART</SectionHead>
+              <div style={{ display:'flex',gap:10,marginBottom:16 }}>
+                <SearchBox onSelect={s=>{setSym(s.toUpperCase());setActiveTab('CHART')}} placeholder="Search stock for chart..." />
               </div>
-              <div style={{ background:'#060e06', border:'1px solid #0a1a0a', borderRadius:8, padding:18 }}>
-                <div style={{ fontSize:9, color:'#2a4a2a', letterSpacing:'3px', marginBottom:12 }}>▸ TRADING STEPS</div>
-                {[
-                  `1. Verify ${fmt(result.livePrice||result.entryPrice)} in your broker`,
-                  `2. Set stop loss: ${fmt(result.stopLoss)}`,
-                  `3. Enter near: ${fmt(result.entryPrice)}`,
-                  `4. Target: ${fmt(result.targetPrice)}`,
-                  '5. Monitor news daily',
-                ].map((s,i)=>(
-                  <div key={i} style={{ fontSize:11, color:'#3a5a3a', marginBottom:8, lineHeight:1.5 }}>{s}</div>
-                ))}
-                <div style={{ fontSize:9, color:'#1e3a1e', marginTop:10, letterSpacing:'1px' }}>SECTOR: {result.sectorAllocation}</div>
-              </div>
+              <TradingChart symbol={sym} />
             </div>
           </div>
         )}
 
-        {/* History */}
-        {history.length > 0 && (
-          <div style={{ marginTop:16 }}>
-            <div style={{ fontSize:9, color:'#1e3a1e', letterSpacing:'3px', marginBottom:10 }}>▸ SESSION HISTORY</div>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              {history.map((h,i)=>{
-                const c = DC[h.decision]||DC.HOLD
-                return (
-                  <div key={i} className="hbadge" onClick={()=>setResult(h)}
-                    style={{ background:c.bg, border:`1px solid ${c.border}20`, borderRadius:4, padding:'6px 12px', display:'flex', gap:8, alignItems:'center' }}>
-                    <span style={{ fontSize:11, fontWeight:700, color:'#e0ffe0' }}>{h.ticker}</span>
-                    {h.livePrice!=null && <span style={{ fontSize:10, color:'#4a6a4a' }}>{fmt(h.livePrice)}</span>}
-                    <span style={{ fontSize:10, color:c.text, fontWeight:700 }}>{h.decision}</span>
-                    <span style={{ fontSize:9, color:'#2a4a2a' }}>{new Date(h.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
-                  </div>
-                )
-              })}
+        {/* ════ NEWS TAB ════ */}
+        {activeTab === 'NEWS' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+            <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:18,padding:18 }}>
+              <SectionHead>LATEST NEWS{sym?` · ${sym}`:''}</SectionHead>
+              <div style={{ marginBottom:16 }}>
+                <SearchBox onSelect={s=>{setSym(s.toUpperCase())}} placeholder="Search stock for news..." />
+              </div>
+              <NewsFeed symbol={sym} />
             </div>
           </div>
         )}
 
-        {/* Empty state */}
-        {!result && !loading && !error && !sym && (
-          <div style={{ textAlign:'center', padding:56, border:'1px dashed #0a1a0a', borderRadius:8 }}>
-            <div style={{ fontFamily:"'Orbitron',monospace", fontSize:34, color:'#0a1a0a', marginBottom:10 }}>◈</div>
-            <div style={{ fontSize:10, color:'#1e3a1e', letterSpacing:'3px' }}>
-              SEARCH A STOCK OR SELECT FROM POPULAR TICKERS ABOVE
+        {/* ════ WATCHLIST TAB ════ */}
+        {activeTab === 'WATCHLIST' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+            <div style={{ background:'rgba(15,23,42,0.7)',border:'1px solid rgba(99,102,241,0.12)',borderRadius:18,padding:18 }}>
+              <SectionHead>MY WATCHLIST</SectionHead>
+              <WatchlistTab onAnalyze={s=>{ setSym(s); setActiveTab('ANALYZE') }} />
             </div>
           </div>
         )}
 
-        <div style={{ marginTop:28, fontSize:9, color:'#0a1a0a', letterSpacing:'1px', textAlign:'center', lineHeight:1.8 }}>
-          DISCLAIMER: FOR EDUCATIONAL PURPOSES ONLY · NOT FINANCIAL ADVICE · ALL TRADING CARRIES RISK
-        </div>
+        {/* ════ ALERTS TAB ════ */}
+        {activeTab === 'ALERTS' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+            <AlertsTab lastResult={result} />
+          </div>
+        )}
+
+      </main>
+
+      {/* ── MOBILE BOTTOM NAV ── */}
+      <nav className="mobile-bottom-nav" style={{
+        position:'fixed',bottom:0,left:0,right:0,zIndex:100,
+        background:'rgba(10,14,26,0.97)',borderTop:'1px solid rgba(99,102,241,0.12)',
+        backdropFilter:'blur(16px)',padding:'8px 0 max(8px,env(safe-area-inset-bottom))',
+        display:'flex',
+      }}>
+        {TABS_CONFIG.map(t=>(
+          <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{
+            flex:1,background:'transparent',border:'none',cursor:'pointer',
+            display:'flex',flexDirection:'column',alignItems:'center',gap:3,
+            padding:'6px 4px',transition:'all .15s',
+          }}>
+            <span style={{ fontSize:20 }}>{t.icon}</span>
+            <span style={{ fontSize:9,letterSpacing:'0.5px',fontWeight:600,color:activeTab===t.id?'#6366f1':'#334155',transition:'color .15s' }}>
+              {t.label.toUpperCase()}
+            </span>
+            {activeTab===t.id && <div style={{ width:4,height:4,borderRadius:'50%',background:'#6366f1' }} />}
+          </button>
+        ))}
+      </nav>
+
+      {/* Disclaimer */}
+      <div style={{ textAlign:'center',padding:'0 20px 120px',fontSize:10,color:'rgba(99,102,241,0.15)',letterSpacing:'1px' }}>
+        FOR EDUCATIONAL PURPOSES ONLY · NOT FINANCIAL ADVICE · ALL TRADING CARRIES RISK
       </div>
     </div>
   )

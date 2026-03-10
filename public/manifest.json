@@ -1,0 +1,17 @@
+{
+  "name": "Algo Trade AI",
+  "short_name": "AlgoTrade",
+  "description": "AI-powered stock trading agent with live prices",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020802",
+  "theme_color": "#00ff90",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%23020802'/><text y='140' font-size='140' text-anchor='middle' x='96' fill='%2300ff90'>📈</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
