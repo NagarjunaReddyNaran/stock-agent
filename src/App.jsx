@@ -66,6 +66,7 @@ const POPULAR_IN = ['RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','WIPRO.NS','I
 const POPULAR_CA = ['TD.TO','RY.TO','CNR.TO','SHOP.TO','BCE.TO']
 const TABS = [
   { id:'ANALYZE',   icon:'🤖', label:'Analyze'   },
+  { id:'MARKETS',   icon:'🔥', label:'Markets'   },
   { id:'CHART',     icon:'📊', label:'Chart'     },
   { id:'NEWS',      icon:'📰', label:'News'      },
   { id:'WATCHLIST', icon:'⭐', label:'Watchlist' },
@@ -88,7 +89,9 @@ const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)) }catch{
 const apiPrice  = async sym => { const r=await fetch(`/api/price?symbol=${encodeURIComponent(sym)}`);  const d=await r.json(); if(!r.ok) throw new Error(d.error||'Price fetch failed'); return d }
 const apiNews   = async sym => { const r=await fetch(`/api/news?symbol=${encodeURIComponent(sym)}`);   const d=await r.json(); return d.articles||[] }
 const apiSearch = async q   => { const r=await fetch(`/api/search?q=${encodeURIComponent(q)}`);        const d=await r.json(); return d.results||[] }
-const apiAlert  = async body=> { const r=await fetch('/api/alert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiAlert    = async body=> { const r=await fetch('/api/alert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiTrending = async () => { const r=await fetch('/api/trending'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiEarnings = async () => { const r=await fetch('/api/earnings'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
 
 // ─── BASE COMPONENTS ──────────────────────────────────────────────────────────
 function Spinner({ size=20 }) {
@@ -664,6 +667,341 @@ function AlertsTab({ lastResult }) {
   )
 }
 
+// ─── TRENDING STOCKS COMPONENT ───────────────────────────────────────────────
+const SIGNAL_STYLE = {
+  BUY:   { bg:'#ecfdf5', border:'#6ee7b7', text:'#059669' },
+  WATCH: { bg:'#fffbeb', border:'#fcd34d', text:'#b45309' },
+  AVOID: { bg:'#fef2f2', border:'#fca5a5', text:'#dc2626' },
+}
+
+const FACTOR_COLORS = {
+  'Analyst Upgrade':    '#059669',
+  'Analyst Downgrade':  '#dc2626',
+  'Earnings Beat':      '#059669',
+  'Earnings Miss':      '#dc2626',
+  'Unusual Volume':     '#4f46e5',
+  'Insider Buying':     '#059669',
+  'Insider Selling':    '#dc2626',
+  'Institutional Buying':'#4f46e5',
+  'M&A Activity':       '#7c3aed',
+  'Government Contract':'#0891b2',
+  'Macro Tailwind':     '#059669',
+  'Macro Headwind':     '#dc2626',
+  'Technical Breakout': '#4f46e5',
+  'Technical Breakdown':'#dc2626',
+  'Options Activity':   '#7c3aed',
+  'Price Target Raise': '#059669',
+  'Price Target Cut':   '#dc2626',
+}
+
+function TrendingStocks({ onAnalyze }) {
+  const [data,    setData]    = React.useState(null)
+  const [loading, setLoading] = React.useState(false)
+  const [error,   setError]   = React.useState(null)
+  const [sortBy,  setSortBy]  = React.useState('rank')
+
+  React.useEffect(() => {
+    // Check sessionStorage cache first (30 min)
+    try {
+      const cached = sessionStorage.getItem('trending_cache')
+      if (cached) {
+        const { data: d, ts } = JSON.parse(cached)
+        if (Date.now() - ts < 30 * 60 * 1000) {
+          setData(d)
+          return
+        }
+      }
+    } catch {}
+    load()
+  }, [])
+
+  async function load() {
+    setLoading(true); setError(null)
+    try {
+      const d = await apiTrending()
+      setData(d)
+      try { sessionStorage.setItem('trending_cache', JSON.stringify({ data: d, ts: Date.now() })) } catch {}
+    } catch(e) { setError(e.message) }
+    setLoading(false)
+  }
+
+  const stocks = React.useMemo(() => {
+    if (!data?.stocks) return []
+    const s = [...data.stocks]
+    if (sortBy === 'confidence') s.sort((a,b) => b.confidence - a.confidence)
+    else if (sortBy === 'change') s.sort((a,b) => Math.abs(b.change||0) - Math.abs(a.change||0))
+    else s.sort((a,b) => a.rank - b.rank)
+    return s
+  }, [data, sortBy])
+
+  if (loading) return (
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:14 }}>
+      <Spinner size={36} />
+      <div style={{ fontSize:15,color:C.text2,fontWeight:600 }}>Analyzing market trends...</div>
+      <div style={{ fontSize:13,color:C.text3 }}>Scanning news, analyst reports, volume & momentum signals</div>
+    </div>
+  )
+
+  if (error) return (
+    <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'16px 20px',color:C.sell,fontSize:14 }}>
+      ⚠ {error}
+      <button onClick={load} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
+    </div>
+  )
+
+  if (!data) return null
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10 }}>
+        <div>
+          {data.cached && (
+            <div style={{ fontSize:12,color:C.text3,marginTop:4 }}>
+              {data.stale ? '⚠ Showing cached data' : `🕐 Refreshes every 30 min`}
+              {data.cachedAt && ` · Last updated ${new Date(data.cachedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`}
+            </div>
+          )}
+        </div>
+        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+          <span style={{ fontSize:13,color:C.text3 }}>Sort by:</span>
+          {[['rank','🏆 Rank'],['confidence','💯 Confidence'],['change','📈 Movement']].map(([id,label])=>(
+            <button key={id} onClick={()=>setSortBy(id)} style={{
+              background:sortBy===id?C.brandLight:'transparent',
+              border:`1px solid ${sortBy===id?C.brand:C.border}`,
+              color:sortBy===id?C.brand:C.text2,
+              padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
+            }}>{label}</button>
+          ))}
+          <button onClick={load} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Stock cards */}
+      <div style={{ display:'flex',flexDirection:'column',gap:12 }}>
+        {stocks.map((s,i) => {
+          const ss = SIGNAL_STYLE[s.signal] || SIGNAL_STYLE.WATCH
+          const up = (s.change || 0) >= 0
+          return (
+            <div key={s.ticker} style={{ background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:14,padding:'16px 18px',boxShadow:'0 1px 4px rgba(0,0,0,0.05)',transition:'all .2s' }}
+              onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 16px rgba(79,70,229,0.1)';e.currentTarget.style.borderColor=C.brand+'40'}}
+              onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,0.05)';e.currentTarget.style.borderColor=C.border}}>
+              <div style={{ display:'flex',alignItems:'flex-start',gap:14,flexWrap:'wrap' }}>
+
+                {/* Rank badge */}
+                <div style={{ width:36,height:36,borderRadius:10,background:i<3?`linear-gradient(135deg,${C.brand},#7c3aed)`:C.cardBg2,border:`1px solid ${i<3?C.brand+'40':C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:800,color:i<3?'#fff':C.text2,flexShrink:0 }}>
+                  {s.rank}
+                </div>
+
+                {/* Main info */}
+                <div style={{ flex:1,minWidth:200 }}>
+                  <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap' }}>
+                    <span style={{ fontSize:17,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace" }}>{s.ticker}</span>
+                    <span style={{ fontSize:14,color:C.text2 }}>{s.name}</span>
+                    <span style={{ fontSize:11,color:C.text3,background:C.cardBg2,border:`1px solid ${C.border}`,borderRadius:6,padding:'1px 8px' }}>{s.sector}</span>
+                    {/* Signal badge */}
+                    <span style={{ fontSize:11,fontWeight:700,color:ss.text,background:ss.bg,border:`1px solid ${ss.border}`,borderRadius:20,padding:'2px 10px' }}>{s.signal}</span>
+                  </div>
+
+                  {/* Catalyst */}
+                  <div style={{ fontSize:13,fontWeight:600,color:C.text1,marginBottom:6,lineHeight:1.4 }}>⚡ {s.catalyst}</div>
+
+                  {/* Reason */}
+                  <div style={{ fontSize:13,color:C.text2,lineHeight:1.6,marginBottom:10 }}>{s.reason}</div>
+
+                  {/* Factor tags */}
+                  <div style={{ display:'flex',flexWrap:'wrap',gap:6 }}>
+                    {(s.factors||[]).map(f => (
+                      <span key={f} style={{ fontSize:11,fontWeight:600,color:FACTOR_COLORS[f]||C.brand,background:(FACTOR_COLORS[f]||C.brand)+'15',border:`1px solid ${(FACTOR_COLORS[f]||C.brand)}30`,borderRadius:6,padding:'2px 8px' }}>{f}</span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right side: confidence + action */}
+                <div style={{ display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0 }}>
+                  {/* Confidence ring */}
+                  <div style={{ textAlign:'center' }}>
+                    <div style={{ fontSize:10,color:C.text3,letterSpacing:'1px',marginBottom:2 }}>CONFIDENCE</div>
+                    <div style={{ fontSize:22,fontWeight:800,color:s.confidence>=80?C.buy:s.confidence>=60?C.warning:C.sell,fontFamily:"'DM Mono',monospace" }}>
+                      {s.confidence}%
+                    </div>
+                    {/* Bar */}
+                    <div style={{ width:56,height:4,background:C.border,borderRadius:2,marginTop:4,overflow:'hidden' }}>
+                      <div style={{ width:`${s.confidence}%`,height:'100%',background:s.confidence>=80?C.buy:s.confidence>=60?C.warning:C.sell,borderRadius:2,transition:'width .6s' }} />
+                    </div>
+                  </div>
+                  <button onClick={()=>onAnalyze(s.ticker)} style={{ background:C.brand,border:'none',color:'#fff',padding:'8px 16px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,transition:'all .2s',whiteSpace:'nowrap' }}>
+                    Analyze ▸
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── EARNINGS CALENDAR COMPONENT ─────────────────────────────────────────────
+const TIME_STYLE = {
+  'Pre-Market':     { bg:'#fef9c3', border:'#fde047', text:'#854d0e', icon:'🌅' },
+  'After-Hours':    { bg:'#e0e7ff', border:'#a5b4fc', text:'#3730a3', icon:'🌙' },
+  'During Market':  { bg:'#dcfce7', border:'#86efac', text:'#166534', icon:'☀️' },
+  'TBD':            { bg:'#f1f5f9', border:'#cbd5e1', text:'#64748b', icon:'❓' },
+}
+
+function EarningsCalendar({ onAnalyze }) {
+  const [data,    setData]    = React.useState(null)
+  const [loading, setLoading] = React.useState(false)
+  const [error,   setError]   = React.useState(null)
+  const [sortBy,  setSortBy]  = React.useState('date')
+  const [filter,  setFilter]  = React.useState('ALL') // ALL, PRE, POST, DURING
+
+  React.useEffect(() => {
+    load()
+  }, [])
+
+  async function load() {
+    setLoading(true); setError(null)
+    try {
+      const d = await apiEarnings()
+      setData(d)
+    } catch(e) { setError(e.message) }
+    setLoading(false)
+  }
+
+  const earnings = React.useMemo(() => {
+    if (!data?.earnings) return []
+    let e = [...data.earnings]
+    if (filter === 'PRE')    e = e.filter(x => x.time === 'Pre-Market')
+    if (filter === 'POST')   e = e.filter(x => x.time === 'After-Hours')
+    if (filter === 'DURING') e = e.filter(x => x.time === 'During Market')
+    if (sortBy === 'alpha') e.sort((a,b) => a.ticker.localeCompare(b.ticker))
+    // default: already sorted by date
+    return e
+  }, [data, sortBy, filter])
+
+  // Group by date
+  const grouped = React.useMemo(() => {
+    const g = {}
+    earnings.forEach(e => {
+      const k = e.dateFormatted || 'TBD'
+      if (!g[k]) g[k] = []
+      g[k].push(e)
+    })
+    return g
+  }, [earnings])
+
+  if (loading) return (
+    <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:14 }}>
+      <Spinner size={36} />
+      <div style={{ fontSize:15,color:C.text2,fontWeight:600 }}>Loading earnings calendar...</div>
+    </div>
+  )
+
+  if (error) return (
+    <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'16px 20px',color:C.sell,fontSize:14 }}>
+      ⚠ {error}
+      <button onClick={load} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
+    </div>
+  )
+
+  if (!data) return null
+
+  return (
+    <div>
+      {/* Controls */}
+      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10 }}>
+        <div style={{ fontSize:13,color:C.text3 }}>
+          {data.week && `Week of ${data.week.from} · `}{earnings.length} major companies reporting
+        </div>
+        <div style={{ display:'flex',gap:6,flexWrap:'wrap' }}>
+          {[['ALL','All'],['PRE','🌅 Pre-Mkt'],['POST','🌙 After-Hrs'],['DURING','☀️ During']].map(([id,label])=>(
+            <button key={id} onClick={()=>setFilter(id)} style={{
+              background:filter===id?C.brandLight:'transparent',
+              border:`1px solid ${filter===id?C.brand:C.border}`,
+              color:filter===id?C.brand:C.text2,
+              padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
+            }}>{label}</button>
+          ))}
+          <button onClick={load} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
+            ↻
+          </button>
+        </div>
+      </div>
+
+      {earnings.length === 0 ? (
+        <div style={{ textAlign:'center',padding:'40px 20px',color:C.text3 }}>
+          <div style={{ fontSize:40,marginBottom:12 }}>📅</div>
+          <div style={{ fontSize:15 }}>No major earnings scheduled this week</div>
+        </div>
+      ) : (
+        <div style={{ display:'flex',flexDirection:'column',gap:20 }}>
+          {Object.entries(grouped).map(([day, items]) => (
+            <div key={day}>
+              {/* Day header */}
+              <div style={{ fontSize:12,fontWeight:700,color:C.brand,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:10,display:'flex',alignItems:'center',gap:8 }}>
+                <div style={{ width:3,height:16,background:C.brand,borderRadius:2 }} />
+                {day}
+                <span style={{ fontWeight:400,color:C.text3,letterSpacing:0 }}>· {items.length} {items.length===1?'company':'companies'}</span>
+              </div>
+
+              <div style={{ display:'flex',flexDirection:'column',gap:8 }}>
+                {items.map((e,i) => {
+                  const ts = TIME_STYLE[e.time] || TIME_STYLE.TBD
+                  return (
+                    <div key={e.ticker+i} style={{ background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:12,padding:'13px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',boxShadow:'0 1px 3px rgba(0,0,0,0.04)',transition:'all .2s' }}
+                      onMouseEnter={ev=>{ev.currentTarget.style.borderColor=C.brand+'40';ev.currentTarget.style.boxShadow='0 4px 12px rgba(79,70,229,0.08)'}}
+                      onMouseLeave={ev=>{ev.currentTarget.style.borderColor=C.border;ev.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)'}}>
+
+                      {/* Company */}
+                      <div style={{ flex:1,minWidth:160 }}>
+                        <div style={{ fontSize:15,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace",marginBottom:2 }}>{e.ticker}</div>
+                        <div style={{ fontSize:13,color:C.text3 }}>{e.name}</div>
+                      </div>
+
+                      {/* EPS estimate */}
+                      {e.epsEstimate != null && (
+                        <div style={{ textAlign:'center' }}>
+                          <div style={{ fontSize:10,color:C.text3,letterSpacing:'1px',marginBottom:2 }}>EPS EST.</div>
+                          <div style={{ fontSize:14,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace" }}>
+                            {e.epsEstimate >= 0 ? '$' : '-$'}{Math.abs(e.epsEstimate).toFixed(2)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Quarter */}
+                      {e.quarter && e.year && (
+                        <div style={{ textAlign:'center' }}>
+                          <div style={{ fontSize:10,color:C.text3,letterSpacing:'1px',marginBottom:2 }}>PERIOD</div>
+                          <div style={{ fontSize:13,fontWeight:600,color:C.text2 }}>Q{e.quarter} {e.year}</div>
+                        </div>
+                      )}
+
+                      {/* Time badge */}
+                      <span style={{ fontSize:12,fontWeight:700,color:ts.text,background:ts.bg,border:`1px solid ${ts.border}`,borderRadius:8,padding:'4px 10px',whiteSpace:'nowrap' }}>
+                        {ts.icon} {e.time}
+                      </span>
+
+                      {/* Analyze button */}
+                      <button onClick={()=>onAnalyze(e.ticker)} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'7px 14px',borderRadius:9,cursor:'pointer',fontSize:12,fontWeight:700,whiteSpace:'nowrap',transition:'all .15s' }}>
+                        Analyze
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab,         setTab]         = useState('ANALYZE')
@@ -901,6 +1239,7 @@ export default function App() {
                         <span style={{ background:'#f1f5f9',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700,letterSpacing:'1px' }}>○ MARKET CLOSED</span>
                       )}
                       <span style={{ fontSize:12,color:C.text3 }}>{liveData.exchange} · {liveData.name}</span>
+
                     </div>
 
                     <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:16,marginBottom:12 }}>
@@ -923,37 +1262,10 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Pre-market price */}
-                    {liveData.preMarketPrice && (
-                      <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
-                        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
-                          <span style={{ fontSize:11,fontWeight:700,color:'#854d0e',background:'#fef9c3',border:'1px solid #fde047',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>PRE-MARKET</span>
-                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.preMarketPrice, liveData.currency)}</span>
-                          {liveData.preMarketChange != null && (
-                            <span style={{ fontSize:13,fontWeight:600,color:liveData.preMarketChange>=0?C.buy:C.sell }}>
-                              {liveData.preMarketChange>=0?'▲':'▼'} {liveData.preMarketChange>=0?'+':''}{liveData.preMarketChange} ({liveData.preMarketChange>=0?'+':''}{liveData.preMarketChangePct}%)
-                            </span>
-                          )}
-                          <span style={{ fontSize:11,color:C.text3 }}>vs prev close</span>
-                        </div>
-                      </div>
-                    )}
 
-                    {/* Post-market price */}
-                    {liveData.postMarketPrice && (
-                      <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
-                        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
-                          <span style={{ fontSize:11,fontWeight:700,color:'#3730a3',background:'#e0e7ff',border:'1px solid #a5b4fc',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>AFTER-HOURS</span>
-                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.postMarketPrice, liveData.currency)}</span>
-                          {liveData.postMarketChange != null && (
-                            <span style={{ fontSize:13,fontWeight:600,color:liveData.postMarketChange>=0?C.buy:C.sell }}>
-                              {liveData.postMarketChange>=0?'▲':'▼'} {liveData.postMarketChange>=0?'+':''}{liveData.postMarketChange} ({liveData.postMarketChange>=0?'+':''}{liveData.postMarketChangePct}%)
-                            </span>
-                          )}
-                          <span style={{ fontSize:11,color:C.text3 }}>vs regular close</span>
-                        </div>
-                      </div>
-                    )}
+
+
+
                   </Card>
                 )}
               </div>
@@ -1126,6 +1438,34 @@ export default function App() {
                 </div>
               </Card>
             )}
+          </div>
+        )}
+
+        {/* ══════════ MARKETS ══════════ */}
+        {tab === 'MARKETS' && (
+          <div style={{ animation:'fadeUp .3s ease' }}>
+            {/* Trending Stocks */}
+            <Card style={{ marginBottom:20 }}>
+              <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4,flexWrap:'wrap',gap:8 }}>
+                <div>
+                  <SectionTitle>🔥 Top 10 Trending Stocks Today</SectionTitle>
+                  <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                    AI-powered ranking based on analyst sentiment, volume, news catalysts, institutional activity, macro events, and options signals.
+                    Click <strong>Analyze ▸</strong> on any stock for a full trading signal.
+                  </div>
+                </div>
+              </div>
+              <TrendingStocks onAnalyze={s => { setSym(s); setTab('ANALYZE') }} />
+            </Card>
+
+            {/* Earnings Calendar */}
+            <Card>
+              <SectionTitle>📅 Earnings Calendar — This Week</SectionTitle>
+              <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                Major US and Canadian companies reporting earnings this week. Click <strong>Analyze ▸</strong> to get an AI signal before earnings.
+              </div>
+              <EarningsCalendar onAnalyze={s => { setSym(s); setTab('ANALYZE') }} />
+            </Card>
           </div>
         )}
 

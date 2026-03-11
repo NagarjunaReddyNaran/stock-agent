@@ -1,64 +1,63 @@
-// ── Market session from Yahoo's own marketState field ─────────────────────────
-function parseSession(marketState) {
-  if (!marketState) return 'CLOSED'
-  const s = marketState.toUpperCase()
-  if (s === 'REGULAR')                    return 'REGULAR'
-  if (s === 'PRE'  || s === 'PREPRE')     return 'PRE_MARKET'
-  if (s === 'POST' || s === 'POSTPOST')   return 'POST_MARKET'
-  return 'CLOSED'
+function round2(n) {
+  if (n == null || isNaN(Number(n))) return null
+  return parseFloat(Number(n).toFixed(2))
 }
 
-function round2(n) { return n != null ? parseFloat(Number(n).toFixed(2)) : null }
-
-// ── Fetch from Yahoo Finance v8 chart (most reliable, works on Vercel) ─────────
-async function yahooChart(symbol) {
-  try {
-    // includePrePost=true returns pre/post market data in meta
-    const url =
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-      `?interval=1d&range=1d&includePrePost=true&events=div%2Csplit`
-
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Accept':          'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(7000),
-    })
-    if (!res.ok) return null
-
-    const data = await res.json()
-    const result = data?.chart?.result?.[0]
-    if (!result) return null
-
-    const meta = result.meta || {}
-    return meta
-  } catch {
-    return null
-  }
-}
-
-// ── Convert user-typed symbols to Yahoo Finance format ────────────────────────
-// User types: RELIANCE.NS, TCS.BO, SHOP.TO, AAPL
-// Yahoo uses: RELIANCE.NS, TCS.BO, SHOP.TO, AAPL — same! ✓
 function toYahoo(symbol) {
-  // Finnhub-style prefixes → Yahoo suffix format
-  if (symbol.startsWith('NSE:')) return symbol.slice(4) + '.NS'
-  if (symbol.startsWith('BSE:')) return symbol.slice(4) + '.BO'
-  return symbol
+  const s = symbol.toUpperCase().trim()
+  if (s.startsWith('NSE:')) return s.slice(4) + '.NS'
+  if (s.startsWith('BSE:')) return s.slice(4) + '.BO'
+  return s
 }
 
-// ── Currency by exchange ──────────────────────────────────────────────────────
-function inferCurrency(symbol, metaCurrency) {
+function inferCurrency(sym, metaCurrency) {
   if (metaCurrency) return metaCurrency
-  if (symbol.endsWith('.NS') || symbol.endsWith('.BO')) return 'INR'
-  if (symbol.endsWith('.TO')) return 'CAD'
+  if (sym.endsWith('.NS') || sym.endsWith('.BO')) return 'INR'
+  if (sym.endsWith('.TO') || sym.endsWith('.TSX')) return 'CAD'
   return 'USD'
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+function parseSession(state) {
+  if (!state) return 'CLOSED'
+  const s = state.toUpperCase()
+  if (s === 'REGULAR')                  return 'REGULAR'
+  if (s === 'PRE'  || s === 'PREPRE')   return 'PRE_MARKET'
+  if (s === 'POST' || s === 'POSTPOST') return 'POST_MARKET'
+  return 'CLOSED'
+}
+
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+  'Accept': 'application/json',
+  'Referer': 'https://finance.yahoo.com',
+}
+
+// Strategy 1: Yahoo v8 chart (primary)
+async function fetchChart(sym) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(6000) })
+    if (!res.ok) return null
+    const data = await res.json()
+    const meta = data?.chart?.result?.[0]?.meta
+    if (!meta?.regularMarketPrice) return null
+    return meta
+  } catch { return null }
+}
+
+// Strategy 2: Yahoo v7 quote (fallback)
+async function fetchV7(sym) {
+  try {
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(sym)}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,regularMarketDayHigh,regularMarketDayLow,marketState,longName,shortName,fullExchangeName,currency`
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(6000) })
+    if (!res.ok) return null
+    const data = await res.json()
+    const q = data?.quoteResponse?.result?.[0]
+    if (!q?.regularMarketPrice) return null
+    return q
+  } catch { return null }
+}
+
 export default async function handler(req, res) {
   const allowed = process.env.ALLOWED_ORIGIN || '*'
   res.setHeader('Access-Control-Allow-Origin', allowed)
@@ -71,54 +70,51 @@ export default async function handler(req, res) {
   const { symbol } = req.query
   if (!symbol) return res.status(400).json({ error: 'Missing symbol.' })
 
-  const yahooSym = toYahoo(symbol.toUpperCase().trim())
+  const yahooSym = toYahoo(symbol)
 
   try {
-    const meta = await yahooChart(yahooSym)
+    const [chart, v7] = await Promise.all([fetchChart(yahooSym), fetchV7(yahooSym)])
 
-    if (!meta || !meta.regularMarketPrice) {
-      return res.status(404).json({
-        error: `No price data found for "${symbol}". Check the ticker and try again.`
+    // Use chart (primary)
+    if (chart) {
+      const rmp = chart.regularMarketPrice
+      const rpc = chart.chartPreviousClose || chart.previousClose || rmp
+      return res.status(200).json({
+        price:     round2(rmp),
+        open:      round2(chart.regularMarketOpen    || rmp),
+        high:      round2(chart.regularMarketDayHigh || rmp),
+        low:       round2(chart.regularMarketDayLow  || rmp),
+        prevClose: round2(rpc),
+        change:    round2(rmp - rpc),
+        changePct: round2(rpc ? (rmp - rpc) / rpc * 100 : 0),
+        name:      chart.longName || chart.shortName || yahooSym,
+        exchange:  chart.fullExchangeName || chart.exchangeName || '',
+        currency:  inferCurrency(yahooSym, chart.currency),
+        session:   parseSession(chart.marketState),
       })
     }
 
-    const rmp = meta.regularMarketPrice
-    const rpc = meta.chartPreviousClose || meta.previousClose || rmp
-    const chg = round2(rmp - rpc)
-    const chgPct = rpc ? round2((rmp - rpc) / rpc * 100) : 0
+    // Use v7 (fallback)
+    if (v7) {
+      const rmp = v7.regularMarketPrice
+      const rpc = v7.regularMarketPreviousClose || rmp
+      return res.status(200).json({
+        price:     round2(rmp),
+        open:      round2(v7.regularMarketOpen    || rmp),
+        high:      round2(v7.regularMarketDayHigh || rmp),
+        low:       round2(v7.regularMarketDayLow  || rmp),
+        prevClose: round2(rpc),
+        change:    round2(v7.regularMarketChange || (rmp - rpc)),
+        changePct: round2(v7.regularMarketChangePercent || 0),
+        name:      v7.longName || v7.shortName || yahooSym,
+        exchange:  v7.fullExchangeName || '',
+        currency:  inferCurrency(yahooSym, v7.currency),
+        session:   parseSession(v7.marketState),
+      })
+    }
 
-    const session = parseSession(meta.marketState)
-
-    // Pre-market
-    const prePx  = meta.preMarketPrice  || null
-    const preChg = prePx ? round2(prePx - rpc) : null
-    const prePct = prePx && rpc ? round2((prePx - rpc) / rpc * 100) : null
-
-    // Post-market (after-hours)
-    const postPx  = meta.postMarketPrice  || null
-    const postChg = postPx ? round2(postPx - rmp) : null
-    const postPct = postPx && rmp ? round2((postPx - rmp) / rmp * 100) : null
-
-    return res.status(200).json({
-      price:     round2(rmp),
-      open:      round2(meta.regularMarketOpen      || rmp),
-      high:      round2(meta.regularMarketDayHigh   || rmp),
-      low:       round2(meta.regularMarketDayLow    || rmp),
-      prevClose: round2(rpc),
-      change:    chg,
-      changePct: chgPct,
-      name:      meta.longName || meta.shortName || yahooSym,
-      exchange:  meta.fullExchangeName || meta.exchangeName || '',
-      currency:  inferCurrency(yahooSym, meta.currency),
-      session,
-      // Pre-market
-      preMarketPrice:     round2(prePx),
-      preMarketChange:    preChg,
-      preMarketChangePct: prePct,
-      // After-hours
-      postMarketPrice:     round2(postPx),
-      postMarketChange:    postChg,
-      postMarketChangePct: postPct,
+    return res.status(404).json({
+      error: `No data found for "${symbol}". Please check the ticker symbol.`
     })
 
   } catch (err) {
