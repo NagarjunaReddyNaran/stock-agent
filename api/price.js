@@ -1,57 +1,64 @@
-// Detect market session based on US Eastern Time
-function getMarketSession() {
-  const now = new Date()
-  // Convert to ET (UTC-5 or UTC-4 during daylight saving)
-  const etOffset = isDST(now) ? -4 : -5
-  const et = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000)
-  const day = et.getDay() // 0=Sun, 6=Sat
-  const h = et.getHours()
-  const m = et.getMinutes()
-  const mins = h * 60 + m
-
-  if (day === 0 || day === 6) return 'CLOSED'           // Weekend
-  if (mins >= 240 && mins < 570)  return 'PRE_MARKET'   // 4:00 AM – 9:30 AM ET
-  if (mins >= 570 && mins < 960)  return 'REGULAR'      // 9:30 AM – 4:00 PM ET
-  if (mins >= 960 && mins < 1200) return 'POST_MARKET'  // 4:00 PM – 8:00 PM ET
+// ── Market session from Yahoo's own marketState field ─────────────────────────
+function parseSession(marketState) {
+  if (!marketState) return 'CLOSED'
+  const s = marketState.toUpperCase()
+  if (s === 'REGULAR')                    return 'REGULAR'
+  if (s === 'PRE'  || s === 'PREPRE')     return 'PRE_MARKET'
+  if (s === 'POST' || s === 'POSTPOST')   return 'POST_MARKET'
   return 'CLOSED'
 }
 
-function isDST(date) {
-  const jan = new Date(date.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(date.getFullYear(), 6, 1).getTimezoneOffset()
-  return date.getTimezoneOffset() < Math.max(jan, jul)
-}
+function round2(n) { return n != null ? parseFloat(Number(n).toFixed(2)) : null }
 
-// Fetch extended hours price from Yahoo Finance (server-side, no CORS issue)
-async function fetchYahooExtended(symbol) {
+// ── Fetch from Yahoo Finance v8 chart (most reliable, works on Vercel) ─────────
+async function yahooChart(symbol) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`
+    // includePrePost=true returns pre/post market data in meta
+    const url =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+      `?interval=1d&range=1d&includePrePost=true&events=div%2Csplit`
+
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(5000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept':          'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(7000),
     })
     if (!res.ok) return null
-    const data = await res.json()
-    const meta = data?.chart?.result?.[0]?.meta
-    if (!meta) return null
 
-    return {
-      preMarketPrice:  meta.preMarketPrice  ? parseFloat(meta.preMarketPrice.toFixed(2))  : null,
-      postMarketPrice: meta.postMarketPrice ? parseFloat(meta.postMarketPrice.toFixed(2)) : null,
-      preMarketChange: meta.preMarketPrice && meta.regularMarketPreviousClose
-        ? parseFloat((meta.preMarketPrice - meta.regularMarketPreviousClose).toFixed(2)) : null,
-      postMarketChange: meta.postMarketPrice && meta.regularMarketPrice
-        ? parseFloat((meta.postMarketPrice - meta.regularMarketPrice).toFixed(2)) : null,
-      preMarketChangePct: meta.preMarketPrice && meta.regularMarketPreviousClose
-        ? parseFloat(((meta.preMarketPrice - meta.regularMarketPreviousClose) / meta.regularMarketPreviousClose * 100).toFixed(2)) : null,
-      postMarketChangePct: meta.postMarketPrice && meta.regularMarketPrice
-        ? parseFloat(((meta.postMarketPrice - meta.regularMarketPrice) / meta.regularMarketPrice * 100).toFixed(2)) : null,
-    }
+    const data = await res.json()
+    const result = data?.chart?.result?.[0]
+    if (!result) return null
+
+    const meta = result.meta || {}
+    return meta
   } catch {
     return null
   }
 }
 
+// ── Convert user-typed symbols to Yahoo Finance format ────────────────────────
+// User types: RELIANCE.NS, TCS.BO, SHOP.TO, AAPL
+// Yahoo uses: RELIANCE.NS, TCS.BO, SHOP.TO, AAPL — same! ✓
+function toYahoo(symbol) {
+  // Finnhub-style prefixes → Yahoo suffix format
+  if (symbol.startsWith('NSE:')) return symbol.slice(4) + '.NS'
+  if (symbol.startsWith('BSE:')) return symbol.slice(4) + '.BO'
+  return symbol
+}
+
+// ── Currency by exchange ──────────────────────────────────────────────────────
+function inferCurrency(symbol, metaCurrency) {
+  if (metaCurrency) return metaCurrency
+  if (symbol.endsWith('.NS') || symbol.endsWith('.BO')) return 'INR'
+  if (symbol.endsWith('.TO')) return 'CAD'
+  return 'USD'
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   const allowed = process.env.ALLOWED_ORIGIN || '*'
   res.setHeader('Access-Control-Allow-Origin', allowed)
@@ -59,52 +66,61 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
-
-  const apiKey = process.env.FINNHUB_API_KEY
-  if (!apiKey) return res.status(500).json({ error: 'FINNHUB_API_KEY not configured in Vercel.' })
+  if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' })
 
   const { symbol } = req.query
-  if (!symbol) return res.status(400).json({ error: 'Missing symbol query param.' })
+  if (!symbol) return res.status(400).json({ error: 'Missing symbol.' })
+
+  const yahooSym = toYahoo(symbol.toUpperCase().trim())
 
   try {
-    // Fetch Finnhub quote + profile + Yahoo extended hours in parallel
-    const [qRes, pRes, extended] = await Promise.all([
-      fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`),
-      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`),
-      fetchYahooExtended(symbol),
-    ])
+    const meta = await yahooChart(yahooSym)
 
-    const q = await qRes.json()
-    const p = pRes.ok ? await pRes.json() : {}
-
-    if (!q || !q.c || q.c === 0) {
-      return res.status(404).json({ error: `No data found for "${symbol}"` })
+    if (!meta || !meta.regularMarketPrice) {
+      return res.status(404).json({
+        error: `No price data found for "${symbol}". Check the ticker and try again.`
+      })
     }
 
-    const session = getMarketSession()
+    const rmp = meta.regularMarketPrice
+    const rpc = meta.chartPreviousClose || meta.previousClose || rmp
+    const chg = round2(rmp - rpc)
+    const chgPct = rpc ? round2((rmp - rpc) / rpc * 100) : 0
+
+    const session = parseSession(meta.marketState)
+
+    // Pre-market
+    const prePx  = meta.preMarketPrice  || null
+    const preChg = prePx ? round2(prePx - rpc) : null
+    const prePct = prePx && rpc ? round2((prePx - rpc) / rpc * 100) : null
+
+    // Post-market (after-hours)
+    const postPx  = meta.postMarketPrice  || null
+    const postChg = postPx ? round2(postPx - rmp) : null
+    const postPct = postPx && rmp ? round2((postPx - rmp) / rmp * 100) : null
 
     return res.status(200).json({
-      // Regular market data
-      price:     parseFloat(q.c.toFixed(2)),
-      open:      parseFloat(q.o.toFixed(2)),
-      high:      parseFloat(q.h.toFixed(2)),
-      low:       parseFloat(q.l.toFixed(2)),
-      prevClose: parseFloat(q.pc.toFixed(2)),
-      change:    parseFloat((q.c - q.pc).toFixed(2)),
-      changePct: parseFloat(((q.c - q.pc) / q.pc * 100).toFixed(2)),
-      name:      p.name || symbol,
-      exchange:  p.exchange || '',
-      // Market session
-      session,   // 'REGULAR' | 'PRE_MARKET' | 'POST_MARKET' | 'CLOSED'
-      // Extended hours (from Yahoo, may be null)
-      preMarketPrice:       extended?.preMarketPrice       ?? null,
-      preMarketChange:      extended?.preMarketChange      ?? null,
-      preMarketChangePct:   extended?.preMarketChangePct   ?? null,
-      postMarketPrice:      extended?.postMarketPrice      ?? null,
-      postMarketChange:     extended?.postMarketChange     ?? null,
-      postMarketChangePct:  extended?.postMarketChangePct  ?? null,
+      price:     round2(rmp),
+      open:      round2(meta.regularMarketOpen      || rmp),
+      high:      round2(meta.regularMarketDayHigh   || rmp),
+      low:       round2(meta.regularMarketDayLow    || rmp),
+      prevClose: round2(rpc),
+      change:    chg,
+      changePct: chgPct,
+      name:      meta.longName || meta.shortName || yahooSym,
+      exchange:  meta.fullExchangeName || meta.exchangeName || '',
+      currency:  inferCurrency(yahooSym, meta.currency),
+      session,
+      // Pre-market
+      preMarketPrice:     round2(prePx),
+      preMarketChange:    preChg,
+      preMarketChangePct: prePct,
+      // After-hours
+      postMarketPrice:     round2(postPx),
+      postMarketChange:    postChg,
+      postMarketChangePct: postPct,
     })
+
   } catch (err) {
     return res.status(500).json({ error: 'Price fetch error: ' + err.message })
   }

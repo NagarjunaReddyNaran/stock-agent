@@ -61,7 +61,9 @@ const DS = {
 }
 const RC = { Low:C.buy, Medium:C.warning, High:C.sell }
 
-const POPULAR = ['AAPL','NVDA','MSFT','GOOGL','AMZN','TSLA','META','JPM','JNJ','XOM','V','UNH','NFLX','AMD','WMT']
+const POPULAR_US = ['AAPL','NVDA','MSFT','GOOGL','AMZN','TSLA','META','JPM','V','NFLX']
+const POPULAR_IN = ['RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','WIPRO.NS','ICICIBANK.NS']
+const POPULAR_CA = ['TD.TO','RY.TO','CNR.TO','SHOP.TO','BCE.TO']
 const TABS = [
   { id:'ANALYZE',   icon:'🤖', label:'Analyze'   },
   { id:'CHART',     icon:'📊', label:'Chart'     },
@@ -71,7 +73,12 @@ const TABS = [
 ]
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fmt    = n => (n==null||isNaN(Number(n))) ? '—' : '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+const fmt    = (n, currency='USD') => {
+  if (n==null||isNaN(Number(n))) return '—'
+  const sym = currency==='INR' ? '₹' : currency==='CAD' ? 'CA$' : '$'
+  return sym + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+}
+const fmtP = n => fmt(n) // price without currency context (used in generic places)
 const pctOf  = (a,b) => (!b||!a||isNaN(a)||isNaN(b)) ? null : (((a-b)/b)*100).toFixed(2)
 const timeAgo= ts => { const s=Math.floor((Date.now()-ts*1000)/1000); if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago' }
 const lsGet  = (k,d) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d }catch{ return d } }
@@ -205,9 +212,13 @@ function SearchBox({ onSelect, disabled, placeholder, autoFocus }) {
             <div key={s.symbol} role="option" aria-selected={i===hi}
               onMouseDown={() => pick(s)}
               onMouseEnter={() => setHi(i)}
-              style={{ padding:'12px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:14,background:i===hi?C.brandLight:'transparent',borderBottom:i<sugg.length-1?`1px solid ${C.border}`:'none',transition:'background .1s' }}>
-              <span style={{ fontSize:14,fontWeight:700,color:C.brand,fontFamily:"'DM Mono',monospace",minWidth:60 }}>{s.symbol}</span>
-              <span style={{ fontSize:14,color:C.text2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{s.name}</span>
+              style={{ padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,background:i===hi?C.brandLight:'transparent',borderBottom:i<sugg.length-1?`1px solid ${C.border}`:'none',transition:'background .1s' }}>
+              <span style={{ fontSize:18,flexShrink:0 }}>{s.flag||'🇺🇸'}</span>
+              <span style={{ fontSize:13,fontWeight:700,color:C.brand,fontFamily:"'DM Mono',monospace",minWidth:90,flexShrink:0 }}>{s.symbol}</span>
+              <span style={{ fontSize:13,color:C.text2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1 }}>{s.name}</span>
+              {s.exchange && s.exchange!=='US' && (
+                <span style={{ fontSize:10,color:C.text3,background:C.cardBg2,border:`1px solid ${C.border}`,borderRadius:4,padding:'2px 6px',flexShrink:0,fontWeight:600 }}>{s.exchange}</span>
+              )}
             </div>
           ))}
           {!busy && sugg.length===0 && q.length>=3 && (
@@ -798,17 +809,39 @@ export default function App() {
                 📡 AI Stock Analysis Terminal
               </div>
 
-              {/* Popular chips */}
-              <div style={{ display:'flex',flexWrap:'wrap',gap:8,marginBottom:14 }} role="group" aria-label="Popular stocks">
-                {POPULAR.map(t => (
-                  <button key={t} className="chip"
-                    onClick={()=>selectSym(t)}
-                    aria-pressed={sym===t}
-                    style={{ background:sym===t?C.brandLight:'#f8fafc',border:`1.5px solid ${sym===t?C.brand:C.border}`,color:sym===t?C.brand:C.text2,padding:'6px 14px',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:600,transition:'all .15s' }}>
-                    {t}
-                  </button>
-                ))}
-              </div>
+              {/* Popular chips by market */}
+              {(() => {
+                const [mkt, setMkt] = React.useState('US')
+                const chips = mkt==='IN' ? POPULAR_IN : mkt==='CA' ? POPULAR_CA : POPULAR_US
+                const stripSuffix = s => s.replace(/\.(NS|BO|TO)$/,'')
+                return (
+                  <div style={{ marginBottom:14 }}>
+                    <div style={{ display:'flex',gap:6,marginBottom:10 }}>
+                      {[['🇺🇸','US','USA'],['🇮🇳','IN','India'],['🇨🇦','CA','Canada']].map(([flag,id,label])=>(
+                        <button key={id} onClick={()=>setMkt(id)} style={{
+                          background:mkt===id?C.brand:'transparent',
+                          border:`1.5px solid ${mkt===id?C.brand:C.border}`,
+                          color:mkt===id?'#fff':C.text2,
+                          padding:'5px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:700,
+                          display:'flex',alignItems:'center',gap:5,transition:'all .15s',
+                        }}>
+                          <span>{flag}</span> {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display:'flex',flexWrap:'wrap',gap:6 }} role="group" aria-label="Popular stocks">
+                      {chips.map(t => (
+                        <button key={t} className="chip"
+                          onClick={()=>selectSym(t)}
+                          aria-pressed={sym===t}
+                          style={{ background:sym===t?C.brandLight:'#f8fafc',border:`1.5px solid ${sym===t?C.brand:C.border}`,color:sym===t?C.brand:C.text2,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s' }}>
+                          {stripSuffix(t)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
 
               <div style={{ display:'flex',gap:10,alignItems:'flex-start',flexWrap:'wrap' }}>
                 <div style={{ flex:1,minWidth:200,display:'flex',flexDirection:'column',gap:8 }}>
@@ -874,14 +907,14 @@ export default function App() {
                       <div>
                         <div style={{ fontSize:12,color:C.text3,marginBottom:3 }}>Regular Session Close</div>
                         <div style={{ display:'flex',alignItems:'baseline',gap:12,flexWrap:'wrap' }}>
-                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:28,fontWeight:700,color:C.text1 }}>{fmt(liveData.price)}</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:28,fontWeight:700,color:C.text1 }}>{fmt(liveData.price, liveData.currency)}</span>
                           <span style={{ fontSize:15,fontWeight:700,color:liveData.change>=0?C.buy:C.sell }}>
                             {liveData.change>=0?'▲':'▼'} {liveData.change>=0?'+':''}{liveData.change} ({liveData.change>=0?'+':''}{liveData.changePct}%)
                           </span>
                         </div>
                       </div>
                       <div style={{ display:'flex',gap:20,flexWrap:'wrap' }}>
-                        {[['Open',fmt(liveData.open)],['High',fmt(liveData.high),C.buy],['Low',fmt(liveData.low),C.sell],['Prev Close',fmt(liveData.prevClose)]].map(([l,v,c])=>(
+                        {[['Open',fmt(liveData.open,liveData.currency)],['High',fmt(liveData.high,liveData.currency),C.buy],['Low',fmt(liveData.low,liveData.currency),C.sell],['Prev Close',fmt(liveData.prevClose,liveData.currency)]].map(([l,v,c])=>(
                           <div key={l}>
                             <div style={{ fontSize:11,color:C.text3,letterSpacing:'0.5px',marginBottom:2 }}>{l}</div>
                             <div style={{ fontSize:13,fontWeight:600,color:c||C.text2,fontFamily:"'DM Mono',monospace" }}>{v}</div>
@@ -895,7 +928,7 @@ export default function App() {
                       <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
                         <div style={{ display:'flex',alignItems:'center',gap:8 }}>
                           <span style={{ fontSize:11,fontWeight:700,color:'#854d0e',background:'#fef9c3',border:'1px solid #fde047',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>PRE-MARKET</span>
-                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.preMarketPrice)}</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.preMarketPrice, liveData.currency)}</span>
                           {liveData.preMarketChange != null && (
                             <span style={{ fontSize:13,fontWeight:600,color:liveData.preMarketChange>=0?C.buy:C.sell }}>
                               {liveData.preMarketChange>=0?'▲':'▼'} {liveData.preMarketChange>=0?'+':''}{liveData.preMarketChange} ({liveData.preMarketChange>=0?'+':''}{liveData.preMarketChangePct}%)
@@ -911,7 +944,7 @@ export default function App() {
                       <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
                         <div style={{ display:'flex',alignItems:'center',gap:8 }}>
                           <span style={{ fontSize:11,fontWeight:700,color:'#3730a3',background:'#e0e7ff',border:'1px solid #a5b4fc',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>AFTER-HOURS</span>
-                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.postMarketPrice)}</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.postMarketPrice, liveData.currency)}</span>
                           {liveData.postMarketChange != null && (
                             <span style={{ fontSize:13,fontWeight:600,color:liveData.postMarketChange>=0?C.buy:C.sell }}>
                               {liveData.postMarketChange>=0?'▲':'▼'} {liveData.postMarketChange>=0?'+':''}{liveData.postMarketChange} ({liveData.postMarketChange>=0?'+':''}{liveData.postMarketChangePct}%)
