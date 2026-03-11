@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 
 // ─── SYSTEM PROMPT ────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are an AI Stock Market Trading Agent responsible for analyzing financial markets and making buy, sell, or hold decisions for stocks.
@@ -260,7 +260,7 @@ function StepLoader({ ticker }) {
 // ─── TRADINGVIEW CHART ────────────────────────────────────────────────────────
 function TradingChart({ symbol }) {
   const wrapRef        = useRef(null)
-  const [chartInterval, setChartInterval] = React.useState('D')
+  const [chartInterval, setChartInterval] = useState('D')
 
   // Calculate chart height based on viewport
   function getHeight() {
@@ -269,7 +269,7 @@ function TradingChart({ symbol }) {
     if (window.innerWidth < 1024) return 500
     return 600
   }
-  const [height, setHeight] = React.useState(getHeight)
+  const [height, setHeight] = useState(getHeight)
 
   useEffect(() => {
     const onResize = () => setHeight(getHeight())
@@ -695,12 +695,12 @@ const FACTOR_COLORS = {
 }
 
 function TrendingStocks({ onAnalyze }) {
-  const [data,    setData]    = React.useState(null)
-  const [loading, setLoading] = React.useState(false)
-  const [error,   setError]   = React.useState(null)
-  const [sortBy,  setSortBy]  = React.useState('rank')
+  const [data,    setData]    = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(null)
+  const [sortBy,  setSortBy]  = useState('rank')
 
-  React.useEffect(() => {
+  useEffect(() => {
     // Check sessionStorage cache first (30 min)
     try {
       const cached = sessionStorage.getItem('trending_cache')
@@ -725,7 +725,7 @@ function TrendingStocks({ onAnalyze }) {
     setLoading(false)
   }
 
-  const stocks = React.useMemo(() => {
+  const stocks = useMemo(() => {
     if (!data?.stocks) return []
     const s = [...data.stocks]
     if (sortBy === 'confidence') s.sort((a,b) => b.confidence - a.confidence)
@@ -854,13 +854,13 @@ const TIME_STYLE = {
 }
 
 function EarningsCalendar({ onAnalyze }) {
-  const [data,    setData]    = React.useState(null)
-  const [loading, setLoading] = React.useState(false)
-  const [error,   setError]   = React.useState(null)
-  const [sortBy,  setSortBy]  = React.useState('date')
-  const [filter,  setFilter]  = React.useState('ALL') // ALL, PRE, POST, DURING
+  const [data,    setData]    = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(null)
+  const [sortBy,  setSortBy]  = useState('date')
+  const [filter,  setFilter]  = useState('ALL') // ALL, PRE, POST, DURING
 
-  React.useEffect(() => {
+  useEffect(() => {
     load()
   }, [])
 
@@ -873,7 +873,7 @@ function EarningsCalendar({ onAnalyze }) {
     setLoading(false)
   }
 
-  const earnings = React.useMemo(() => {
+  const earnings = useMemo(() => {
     if (!data?.earnings) return []
     let e = [...data.earnings]
     if (filter === 'PRE')    e = e.filter(x => x.time === 'Pre-Market')
@@ -885,7 +885,7 @@ function EarningsCalendar({ onAnalyze }) {
   }, [data, sortBy, filter])
 
   // Group by date
-  const grouped = React.useMemo(() => {
+  const grouped = useMemo(() => {
     const g = {}
     earnings.forEach(e => {
       const k = e.dateFormatted || 'TBD'
@@ -1149,7 +1149,7 @@ export default function App() {
 
               {/* Popular chips by market */}
               {(() => {
-                const [mkt, setMkt] = React.useState('US')
+                const [mkt, setMkt] = useState('US')
                 const chips = mkt==='IN' ? POPULAR_IN : mkt==='CA' ? POPULAR_CA : POPULAR_US
                 const stripSuffix = s => s.replace(/\.(NS|BO|TO)$/,'')
                 return (
