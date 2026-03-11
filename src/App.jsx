@@ -1002,6 +1002,40 @@ function EarningsCalendar({ onAnalyze }) {
   )
 }
 
+// ─── POPULAR CHIPS COMPONENT ─────────────────────────────────────────────────
+function PopularChips({ sym, onSelect }) {
+  const [mkt, setMkt] = useState('US')
+  const chips = mkt === 'IN' ? POPULAR_IN : mkt === 'CA' ? POPULAR_CA : POPULAR_US
+  const stripSuffix = s => s.replace(/\.(NS|BO|TO)$/, '')
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ display:'flex',gap:6,marginBottom:10 }}>
+        {[['🇺🇸','US','USA'],['🇮🇳','IN','India'],['🇨🇦','CA','Canada']].map(([flag,id,label]) => (
+          <button key={id} onClick={() => setMkt(id)} style={{
+            background: mkt===id ? C.brand : 'transparent',
+            border: `1.5px solid ${mkt===id ? C.brand : C.border}`,
+            color: mkt===id ? '#fff' : C.text2,
+            padding:'5px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:700,
+            display:'flex',alignItems:'center',gap:5,transition:'all .15s',
+          }}>
+            <span>{flag}</span> {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display:'flex',flexWrap:'wrap',gap:6 }} role="group" aria-label="Popular stocks">
+        {chips.map(t => (
+          <button key={t} className="chip"
+            onClick={() => onSelect(t)}
+            aria-pressed={sym === t}
+            style={{ background:sym===t?C.brandLight:'#f8fafc',border:`1.5px solid ${sym===t?C.brand:C.border}`,color:sym===t?C.brand:C.text2,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s' }}>
+            {stripSuffix(t)}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab,         setTab]         = useState('ANALYZE')
@@ -1148,38 +1182,7 @@ export default function App() {
               </div>
 
               {/* Popular chips by market */}
-              {(() => {
-                const [mkt, setMkt] = useState('US')
-                const chips = mkt==='IN' ? POPULAR_IN : mkt==='CA' ? POPULAR_CA : POPULAR_US
-                const stripSuffix = s => s.replace(/\.(NS|BO|TO)$/,'')
-                return (
-                  <div style={{ marginBottom:14 }}>
-                    <div style={{ display:'flex',gap:6,marginBottom:10 }}>
-                      {[['🇺🇸','US','USA'],['🇮🇳','IN','India'],['🇨🇦','CA','Canada']].map(([flag,id,label])=>(
-                        <button key={id} onClick={()=>setMkt(id)} style={{
-                          background:mkt===id?C.brand:'transparent',
-                          border:`1.5px solid ${mkt===id?C.brand:C.border}`,
-                          color:mkt===id?'#fff':C.text2,
-                          padding:'5px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:700,
-                          display:'flex',alignItems:'center',gap:5,transition:'all .15s',
-                        }}>
-                          <span>{flag}</span> {label}
-                        </button>
-                      ))}
-                    </div>
-                    <div style={{ display:'flex',flexWrap:'wrap',gap:6 }} role="group" aria-label="Popular stocks">
-                      {chips.map(t => (
-                        <button key={t} className="chip"
-                          onClick={()=>selectSym(t)}
-                          aria-pressed={sym===t}
-                          style={{ background:sym===t?C.brandLight:'#f8fafc',border:`1.5px solid ${sym===t?C.brand:C.border}`,color:sym===t?C.brand:C.text2,padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s' }}>
-                          {stripSuffix(t)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })()}
+              <PopularChips sym={sym} onSelect={selectSym} />
 
               <div style={{ display:'flex',gap:10,alignItems:'flex-start',flexWrap:'wrap' }}>
                 <div style={{ flex:1,minWidth:200,display:'flex',flexDirection:'column',gap:8 }}>
