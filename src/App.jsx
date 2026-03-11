@@ -691,7 +691,7 @@ export default function App() {
     if (!live) { try{ live=await apiPrice(sym); setLiveData(live) }catch(_){} }
 
     const priceBlock = live
-      ? `LIVE MARKET DATA:\n- Current Price: $${live.price}\n- Change: ${live.change>=0?'+':''}${live.change} (${live.changePct}%)\n- Range: $${live.low} - $${live.high}\n- Open: $${live.open} | Prev Close: $${live.prevClose}\n- Company: ${live.name}\nUSE $${live.price} as the EXACT basis for all price calculations.`
+      ? `LIVE MARKET DATA:\n- Regular Session Price: $${live.price}\n- Change: ${live.change>=0?'+':''}${live.change} (${live.changePct}%)\n- Range: $${live.low} - $${live.high}\n- Open: $${live.open} | Prev Close: $${live.prevClose}\n- Company: ${live.name}\n- Market Session: ${live.session}${live.postMarketPrice?`\n- After-Hours Price: $${live.postMarketPrice} (${live.postMarketChange>=0?'+':''}${live.postMarketChange}, ${live.postMarketChange>=0?'+':''}${live.postMarketChangePct}%)`:``}${live.preMarketPrice?`\n- Pre-Market Price: $${live.preMarketPrice} (${live.preMarketChange>=0?'+':''}${live.preMarketChange}, ${live.preMarketChange>=0?'+':''}${live.preMarketChangePct}% vs prev close)`:``}\nUSE the most current available price as the EXACT basis for all price calculations.`
       : `Live price unavailable. Use your best knowledge of ${sym} current price range.`
 
     try {
@@ -853,28 +853,74 @@ export default function App() {
                 )}
                 {liveData && !liveLoading && (
                   <Card style={{ padding:'16px 20px',border:`1px solid ${liveData.change>=0?C.buyBorder:C.sellBorder}`,background:liveData.change>=0?C.buyBg:C.sellBg }}>
-                    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:16 }}>
-                      <div style={{ display:'flex',alignItems:'center',gap:14 }}>
-                        <div style={{ width:44,height:44,borderRadius:12,background:C.cardBg,border:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0 }}>📈</div>
-                        <div>
-                          <div style={{ fontSize:13,color:C.text3,marginBottom:3 }}>{liveData.name} · Live Price</div>
-                          <div style={{ display:'flex',alignItems:'baseline',gap:12,flexWrap:'wrap' }}>
-                            <span style={{ fontFamily:"'DM Mono',monospace",fontSize:26,fontWeight:700,color:C.text1 }}>{fmt(liveData.price)}</span>
-                            <span style={{ fontSize:15,fontWeight:700,color:liveData.change>=0?C.buy:C.sell }}>
-                              {liveData.change>=0?'▲':'▼'} {liveData.change>=0?'+':''}{liveData.change} ({liveData.change>=0?'+':''}{liveData.changePct}%)
-                            </span>
-                          </div>
+                    {/* Session badge */}
+                    <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap' }}>
+                      {liveData.session === 'REGULAR' && (
+                        <span style={{ background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700,letterSpacing:'1px' }}>● MARKET OPEN</span>
+                      )}
+                      {liveData.session === 'PRE_MARKET' && (
+                        <span style={{ background:'#fef9c3',color:'#854d0e',border:'1px solid #fde047',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700,letterSpacing:'1px' }}>◐ PRE-MARKET</span>
+                      )}
+                      {liveData.session === 'POST_MARKET' && (
+                        <span style={{ background:'#e0e7ff',color:'#3730a3',border:'1px solid #a5b4fc',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700,letterSpacing:'1px' }}>◑ AFTER-HOURS</span>
+                      )}
+                      {liveData.session === 'CLOSED' && (
+                        <span style={{ background:'#f1f5f9',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:700,letterSpacing:'1px' }}>○ MARKET CLOSED</span>
+                      )}
+                      <span style={{ fontSize:12,color:C.text3 }}>{liveData.exchange} · {liveData.name}</span>
+                    </div>
+
+                    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:16,marginBottom:12 }}>
+                      <div>
+                        <div style={{ fontSize:12,color:C.text3,marginBottom:3 }}>Regular Session Close</div>
+                        <div style={{ display:'flex',alignItems:'baseline',gap:12,flexWrap:'wrap' }}>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:28,fontWeight:700,color:C.text1 }}>{fmt(liveData.price)}</span>
+                          <span style={{ fontSize:15,fontWeight:700,color:liveData.change>=0?C.buy:C.sell }}>
+                            {liveData.change>=0?'▲':'▼'} {liveData.change>=0?'+':''}{liveData.change} ({liveData.change>=0?'+':''}{liveData.changePct}%)
+                          </span>
                         </div>
                       </div>
                       <div style={{ display:'flex',gap:20,flexWrap:'wrap' }}>
-                        {[['Open',fmt(liveData.open)],['High',fmt(liveData.high),C.buy],['Low',fmt(liveData.low),C.sell],['Prev',fmt(liveData.prevClose)]].map(([l,v,c])=>(
+                        {[['Open',fmt(liveData.open)],['High',fmt(liveData.high),C.buy],['Low',fmt(liveData.low),C.sell],['Prev Close',fmt(liveData.prevClose)]].map(([l,v,c])=>(
                           <div key={l}>
                             <div style={{ fontSize:11,color:C.text3,letterSpacing:'0.5px',marginBottom:2 }}>{l}</div>
-                            <div style={{ fontSize:14,fontWeight:600,color:c||C.text2,fontFamily:"'DM Mono',monospace" }}>{v}</div>
+                            <div style={{ fontSize:13,fontWeight:600,color:c||C.text2,fontFamily:"'DM Mono',monospace" }}>{v}</div>
                           </div>
                         ))}
                       </div>
                     </div>
+
+                    {/* Pre-market price */}
+                    {liveData.preMarketPrice && (
+                      <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
+                        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                          <span style={{ fontSize:11,fontWeight:700,color:'#854d0e',background:'#fef9c3',border:'1px solid #fde047',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>PRE-MARKET</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.preMarketPrice)}</span>
+                          {liveData.preMarketChange != null && (
+                            <span style={{ fontSize:13,fontWeight:600,color:liveData.preMarketChange>=0?C.buy:C.sell }}>
+                              {liveData.preMarketChange>=0?'▲':'▼'} {liveData.preMarketChange>=0?'+':''}{liveData.preMarketChange} ({liveData.preMarketChange>=0?'+':''}{liveData.preMarketChangePct}%)
+                            </span>
+                          )}
+                          <span style={{ fontSize:11,color:C.text3 }}>vs prev close</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Post-market price */}
+                    {liveData.postMarketPrice && (
+                      <div style={{ borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap' }}>
+                        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                          <span style={{ fontSize:11,fontWeight:700,color:'#3730a3',background:'#e0e7ff',border:'1px solid #a5b4fc',borderRadius:6,padding:'2px 8px',letterSpacing:'0.5px' }}>AFTER-HOURS</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:C.text1 }}>{fmt(liveData.postMarketPrice)}</span>
+                          {liveData.postMarketChange != null && (
+                            <span style={{ fontSize:13,fontWeight:600,color:liveData.postMarketChange>=0?C.buy:C.sell }}>
+                              {liveData.postMarketChange>=0?'▲':'▼'} {liveData.postMarketChange>=0?'+':''}{liveData.postMarketChange} ({liveData.postMarketChange>=0?'+':''}{liveData.postMarketChangePct}%)
+                            </span>
+                          )}
+                          <span style={{ fontSize:11,color:C.text3 }}>vs regular close</span>
+                        </div>
+                      </div>
+                    )}
                   </Card>
                 )}
               </div>
