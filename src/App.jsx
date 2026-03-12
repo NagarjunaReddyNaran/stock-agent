@@ -694,45 +694,17 @@ const FACTOR_COLORS = {
   'Price Target Cut':   '#dc2626',
 }
 
-function TrendingStocks({ onAnalyze }) {
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
-  const [sortBy,  setSortBy]  = useState('rank')
+function TrendingStocks({ onAnalyze, data, loading, error, onRefresh }) {
+  const [sortBy, setSortBy] = useState('rank')
 
-  useEffect(() => {
-    // Check sessionStorage cache first (30 min)
-    try {
-      const cached = sessionStorage.getItem('trending_cache')
-      if (cached) {
-        const { data: d, ts } = JSON.parse(cached)
-        if (Date.now() - ts < 30 * 60 * 1000) {
-          setData(d)
-          return
-        }
-      }
-    } catch {}
-    load()
-  }, [])
-
-  async function load() {
-    setLoading(true); setError(null)
-    try {
-      const d = await apiTrending()
-      setData(d)
-      try { sessionStorage.setItem('trending_cache', JSON.stringify({ data: d, ts: Date.now() })) } catch {}
-    } catch(e) { setError(e.message) }
-    setLoading(false)
-  }
-
-  const stocks = useMemo(() => {
+  const stocks = (() => {
     if (!data?.stocks) return []
     const s = [...data.stocks]
     if (sortBy === 'confidence') s.sort((a,b) => b.confidence - a.confidence)
     else if (sortBy === 'change') s.sort((a,b) => Math.abs(b.change||0) - Math.abs(a.change||0))
     else s.sort((a,b) => a.rank - b.rank)
     return s
-  }, [data, sortBy])
+  })()
 
   if (loading) return (
     <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:14 }}>
@@ -745,7 +717,7 @@ function TrendingStocks({ onAnalyze }) {
   if (error) return (
     <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'16px 20px',color:C.sell,fontSize:14 }}>
       ⚠ {error}
-      <button onClick={load} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
+      <button onClick={onRefresh} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
     </div>
   )
 
@@ -773,7 +745,7 @@ function TrendingStocks({ onAnalyze }) {
               padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
             }}>{label}</button>
           ))}
-          <button onClick={load} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
+          <button onClick={onRefresh} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
             ↻ Refresh
           </button>
         </div>
@@ -853,39 +825,19 @@ const TIME_STYLE = {
   'TBD':            { bg:'#f1f5f9', border:'#cbd5e1', text:'#64748b', icon:'❓' },
 }
 
-function EarningsCalendar({ onAnalyze }) {
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
-  const [sortBy,  setSortBy]  = useState('date')
-  const [filter,  setFilter]  = useState('ALL') // ALL, PRE, POST, DURING
+function EarningsCalendar({ onAnalyze, data, loading, error, onRefresh }) {
+  const [filter, setFilter] = useState('ALL')
 
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function load() {
-    setLoading(true); setError(null)
-    try {
-      const d = await apiEarnings()
-      setData(d)
-    } catch(e) { setError(e.message) }
-    setLoading(false)
-  }
-
-  const earnings = useMemo(() => {
+  const earnings = (() => {
     if (!data?.earnings) return []
     let e = [...data.earnings]
     if (filter === 'PRE')    e = e.filter(x => x.time === 'Pre-Market')
     if (filter === 'POST')   e = e.filter(x => x.time === 'After-Hours')
     if (filter === 'DURING') e = e.filter(x => x.time === 'During Market')
-    if (sortBy === 'alpha') e.sort((a,b) => a.ticker.localeCompare(b.ticker))
-    // default: already sorted by date
     return e
-  }, [data, sortBy, filter])
+  })()
 
-  // Group by date
-  const grouped = useMemo(() => {
+  const grouped = (() => {
     const g = {}
     earnings.forEach(e => {
       const k = e.dateFormatted || 'TBD'
@@ -893,7 +845,7 @@ function EarningsCalendar({ onAnalyze }) {
       g[k].push(e)
     })
     return g
-  }, [earnings])
+  })()
 
   if (loading) return (
     <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:14 }}>
@@ -905,7 +857,7 @@ function EarningsCalendar({ onAnalyze }) {
   if (error) return (
     <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'16px 20px',color:C.sell,fontSize:14 }}>
       ⚠ {error}
-      <button onClick={load} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
+      <button onClick={onRefresh} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:13 }}>Retry</button>
     </div>
   )
 
@@ -927,7 +879,7 @@ function EarningsCalendar({ onAnalyze }) {
               padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
             }}>{label}</button>
           ))}
-          <button onClick={load} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
+          <button onClick={onRefresh} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'5px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>
             ↻
           </button>
         </div>
@@ -1049,8 +1001,52 @@ export default function App() {
   const [error,       setError]       = useState(null)
   const [history,     setHistory]     = useState([])
   const [time,        setTime]        = useState(new Date())
+  // Markets tab state — kept here to avoid hook violations in child components
+  const [trendingData,    setTrendingData]    = useState(null)
+  const [trendingLoading, setTrendingLoading] = useState(false)
+  const [trendingError,   setTrendingError]   = useState(null)
+  const [earningsData,    setEarningsData]    = useState(null)
+  const [earningsLoading, setEarningsLoading] = useState(false)
+  const [earningsError,   setEarningsError]   = useState(null)
 
   useEffect(() => { const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t) },[])
+
+  // Load Markets data when tab switches to MARKETS
+  useEffect(() => {
+    if (tab === 'MARKETS') {
+      if (!trendingData && !trendingLoading) loadTrending()
+      if (!earningsData && !earningsLoading) loadEarnings()
+    }
+  }, [tab])
+
+  async function loadTrending() {
+    setTrendingLoading(true); setTrendingError(null)
+    try {
+      // Check sessionStorage cache (30 min)
+      try {
+        const cached = sessionStorage.getItem('trending_cache')
+        if (cached) {
+          const { data: d, ts } = JSON.parse(cached)
+          if (Date.now() - ts < 30 * 60 * 1000) {
+            setTrendingData(d); setTrendingLoading(false); return
+          }
+        }
+      } catch {}
+      const d = await apiTrending()
+      setTrendingData(d)
+      try { sessionStorage.setItem('trending_cache', JSON.stringify({ data: d, ts: Date.now() })) } catch {}
+    } catch(e) { setTrendingError(e.message) }
+    setTrendingLoading(false)
+  }
+
+  async function loadEarnings() {
+    setEarningsLoading(true); setEarningsError(null)
+    try {
+      const d = await apiEarnings()
+      setEarningsData(d)
+    } catch(e) { setEarningsError(e.message) }
+    setEarningsLoading(false)
+  }
 
   useEffect(() => {
     if (!sym) { setLiveData(null); setLiveError(null); return }
@@ -1430,16 +1426,94 @@ export default function App() {
               </div>
             )}
 
-            {/* Empty state */}
+            {/* ── SEO Hero / Empty State ── */}
             {!result && !loading && !error && !sym && (
-              <Card style={{ textAlign:'center',padding:56 }}>
-                <div style={{ fontSize:60,marginBottom:16 }}>📈</div>
-                <div style={{ fontFamily:"'Syne',sans-serif",fontSize:24,fontWeight:800,color:C.text1,marginBottom:10 }}>AI Stock Trading Agent</div>
-                <div style={{ fontSize:15,color:C.text3,lineHeight:1.8,maxWidth:420,margin:'0 auto' }}>
-                  Search for any stock or tap a popular ticker above.<br/>
-                  Get AI-powered <strong style={{color:C.buy}}>BUY</strong> / <strong style={{color:C.sell}}>SELL</strong> / <strong style={{color:C.hold}}>HOLD</strong> signals with live prices, stop loss, and target in seconds.
-                </div>
-              </Card>
+              <div>
+                {/* H1 — visible to Google, styled as hero */}
+                <Card style={{ textAlign:'center', padding:'48px 32px', marginBottom:16 }}>
+                  <div style={{ fontSize:56, marginBottom:16 }}>📈</div>
+                  <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:26, fontWeight:800, color:C.text1, marginBottom:10, lineHeight:1.3 }}>
+                    Free AI Stock Trading Agent — BUY, SELL &amp; HOLD Signals
+                  </h1>
+                  <p style={{ fontSize:15, color:C.text3, lineHeight:1.8, maxWidth:500, margin:'0 auto 24px' }}>
+                    Search any stock or tap a popular ticker above. Get AI-powered{' '}
+                    <strong style={{color:C.buy}}>BUY</strong> /{' '}
+                    <strong style={{color:C.sell}}>SELL</strong> /{' '}
+                    <strong style={{color:C.hold}}>HOLD</strong>{' '}
+                    signals with live prices, stop loss, and price targets in seconds. 100% free — no signup needed.
+                  </p>
+                  {/* Feature badges */}
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center', marginBottom:24 }}>
+                    {[
+                      ['🇺🇸','US Stocks (NYSE/NASDAQ)'],
+                      ['🇮🇳','Indian Stocks (NSE/BSE)'],
+                      ['🇨🇦','Canadian Stocks (TSX)'],
+                      ['💰','Live Prices (Real-Time)'],
+                      ['🎯','Entry · Stop Loss · Target'],
+                      ['⚡','Risk/Reward Ratio'],
+                      ['📰','Latest News Per Stock'],
+                      ['🔔','Free Email Alerts'],
+                    ].map(([icon, label]) => (
+                      <span key={label} style={{ background:C.brandLight, color:C.brand, border:`1px solid ${C.brand}30`, borderRadius:20, padding:'5px 12px', fontSize:12, fontWeight:600 }}>
+                        {icon} {label}
+                      </span>
+                    ))}
+                  </div>
+                </Card>
+
+                {/* SEO About section — AI-readable, Google-indexable */}
+                <Card style={{ marginBottom:16 }}>
+                  <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, color:C.text1, marginBottom:12 }}>
+                    What is AlgoTradeAI?
+                  </h2>
+                  <p style={{ fontSize:14, color:C.text2, lineHeight:1.8, marginBottom:12 }}>
+                    AlgoTradeAI is a free, AI-powered stock market trading agent that analyzes any stock and instantly generates <strong>BUY, SELL, or HOLD</strong> trading signals based on live market data, technical indicators, analyst sentiment, macroeconomic factors, and institutional activity. Powered by Groq&apos;s Llama 3.3-70B AI model and real-time prices from Finnhub.
+                  </p>
+                  <p style={{ fontSize:14, color:C.text2, lineHeight:1.8, marginBottom:16 }}>
+                    Every analysis includes a specific <strong>entry price</strong>, <strong>stop loss level</strong>, <strong>price target</strong>, confidence score, and risk/reward ratio — all grounded in the current live market price. The platform supports <strong>US stocks (NYSE, NASDAQ)</strong>, <strong>Indian stocks (NSE, BSE)</strong>, and <strong>Canadian stocks (TSX)</strong>.
+                  </p>
+                  <h3 style={{ fontSize:15, fontWeight:700, color:C.text1, marginBottom:10 }}>Key Features</h3>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:8 }}>
+                    {[
+                      '🤖 AI BUY/SELL/HOLD signals',
+                      '💹 Real-time live stock prices',
+                      '🎯 Exact entry, stop loss & target',
+                      '⚡ Risk/reward ratio calculation',
+                      '🔥 Top 10 trending stocks daily',
+                      '📅 Weekly earnings calendar',
+                      '⭐ Stock watchlist tracker',
+                      '📊 TradingView price charts',
+                      '📰 Latest financial news',
+                      '🔔 Free email trading alerts',
+                      '🇮🇳 Indian NSE/BSE stocks',
+                      '🇨🇦 Canadian TSX stocks',
+                    ].map(f => (
+                      <div key={f} style={{ fontSize:13, color:C.text2, padding:'6px 10px', background:C.cardBg2, borderRadius:8, border:`1px solid ${C.border}` }}>{f}</div>
+                    ))}
+                  </div>
+                </Card>
+
+                {/* FAQ Section — targets featured snippets */}
+                <Card>
+                  <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, color:C.text1, marginBottom:16 }}>
+                    Frequently Asked Questions
+                  </h2>
+                  {[
+                    { q:'Is AlgoTradeAI free to use?', a:'Yes, AlgoTradeAI is completely free. No subscription, no credit card, no sign-up required. Open the website and start analyzing stocks instantly.' },
+                    { q:'Which stock markets does AlgoTradeAI support?', a:'AlgoTradeAI supports US stocks (NYSE and NASDAQ), Indian stocks (NSE and BSE — search RELIANCE.NS, TCS.NS, INFY.NS), and Canadian stocks (TSX — search SHOP.TO, RY.TO).' },
+                    { q:'How are the BUY/SELL/HOLD signals generated?', a:'The AI analyzes news catalysts, analyst upgrades/downgrades, financial metrics (P/E, revenue growth), technical indicators (RSI, MACD, moving averages), and institutional activity. It confirms with at least 3 independent signals before recommending.' },
+                    { q:'How is AlgoTradeAI different from TrendSpider or Trade Ideas?', a:'AlgoTradeAI is completely free. TrendSpider costs $51-$199/month and Trade Ideas costs $127-$254/month. AlgoTradeAI also uniquely supports Indian and Canadian stocks which most competitors do not.' },
+                    { q:'How do I analyze Indian NSE stocks?', a:'Search for the company name (e.g., Reliance, Infosys) or type the NSE ticker with .NS suffix (RELIANCE.NS, TCS.NS, INFY.NS). Click the 🇮🇳 India button to see popular Indian stock chips.' },
+                  ].map(({ q, a }) => (
+                    <details key={q} style={{ borderBottom:`1px solid ${C.border}`, padding:'12px 0' }}>
+                      <summary style={{ fontSize:14, fontWeight:600, color:C.text1, cursor:'pointer', listStyle:'none', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        {q} <span style={{ color:C.brand, fontSize:18, flexShrink:0 }}>+</span>
+                      </summary>
+                      <p style={{ fontSize:14, color:C.text2, lineHeight:1.7, marginTop:10, marginBottom:0 }}>{a}</p>
+                    </details>
+                  ))}
+                </Card>
+              </div>
             )}
           </div>
         )}
@@ -1458,7 +1532,13 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <TrendingStocks onAnalyze={s => { setSym(s); setTab('ANALYZE') }} />
+              <TrendingStocks
+                onAnalyze={s => { setSym(s); setTab('ANALYZE') }}
+                data={trendingData}
+                loading={trendingLoading}
+                error={trendingError}
+                onRefresh={loadTrending}
+              />
             </Card>
 
             {/* Earnings Calendar */}
@@ -1467,7 +1547,13 @@ export default function App() {
               <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
                 Major US and Canadian companies reporting earnings this week. Click <strong>Analyze ▸</strong> to get an AI signal before earnings.
               </div>
-              <EarningsCalendar onAnalyze={s => { setSym(s); setTab('ANALYZE') }} />
+              <EarningsCalendar
+                onAnalyze={s => { setSym(s); setTab('ANALYZE') }}
+                data={earningsData}
+                loading={earningsLoading}
+                error={earningsError}
+                onRefresh={loadEarnings}
+              />
             </Card>
           </div>
         )}

@@ -1,17 +1,41 @@
 {
-  "name": "Algo Trade AI",
-  "short_name": "AlgoTrade",
-  "description": "AI-powered stock trading agent with live prices",
+  "name": "AlgoTradeAI — Free AI Stock Trading Agent",
+  "short_name": "AlgoTradeAI",
+  "description": "Free AI-powered stock trading agent. Get instant BUY/SELL/HOLD signals with live prices for US, Indian (NSE/BSE) and Canadian (TSX) stocks. No subscription needed.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#020802",
-  "theme_color": "#00ff90",
+  "background_color": "#f0f4f8",
+  "theme_color": "#4f46e5",
   "orientation": "portrait-primary",
+  "lang": "en",
+  "categories": ["finance", "productivity", "utilities"],
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%23020802'/><text y='140' font-size='140' text-anchor='middle' x='96' fill='%2300ff90'>📈</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='24' fill='%234f46e5'/><text y='138' font-size='120' text-anchor='middle' x='96'>📈</text></svg>",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='64' fill='%234f46e5'/><text y='370' font-size='320' text-anchor='middle' x='256'>📈</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Analyze a Stock",
+      "short_name": "Analyze",
+      "description": "Get instant AI trading signals for any stock",
+      "url": "/#analyze"
+    },
+    {
+      "name": "Trending Stocks",
+      "short_name": "Markets",
+      "description": "See today's top 10 trending stocks",
+      "url": "/#markets"
     }
   ]
 }
