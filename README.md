@@ -1,6 +1,12 @@
-# 📈 Algo Trade AI — Stock Trading Agent
+# AlgoTradeAI — Free AI Stock Trading Agent
 
-An AI-powered stock market trading agent with **live prices**, built with React + Vite. Analyzes stocks and gives BUY / SELL / HOLD signals with entry price, stop loss, and target price — all grounded in real-time market data.
+🔗 **Live at: [algotradeai.live](https://www.algotradeai.live)**
+
+Free AI-powered stock trading agent that provides instant BUY, SELL, and HOLD
+signals with live prices, stop loss, price targets, and risk/reward ratio.
+
+Supports US stocks (NYSE/NASDAQ), Indian stocks (NSE/BSE), and Canadian stocks (TSX).
+No subscription or signup required.
 
 ## ✨ Features
 
@@ -16,6 +22,7 @@ An AI-powered stock market trading agent with **live prices**, built with React 
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - [Node.js](https://nodejs.org) (LTS version)
 - Free [Finnhub API key](https://finnhub.io/register)
 
@@ -38,8 +45,8 @@ npm run build
 
 ## 🔑 API Keys Required
 
-| Key | Where to get | Cost |
-|-----|-------------|------|
+| Key         | Where to get                                       | Cost                |
+| ----------- | -------------------------------------------------- | ------------------- |
 | Finnhub API | [finnhub.io/register](https://finnhub.io/register) | Free (60 calls/min) |
 
 > The Anthropic API key is handled automatically when deployed via Claude.ai artifacts or when you add it as an environment variable.
