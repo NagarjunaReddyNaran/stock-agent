@@ -1428,12 +1428,20 @@ function ContactModal({ onClose }) {
   async function submit(e) {
     e.preventDefault()
     if (!form.name || !form.email || !form.message) { setStatus({ ok:false, msg:'Please fill in all fields.' }); return }
-    setBusy(true)
-    // Mailto fallback — no backend needed
-    const subject = encodeURIComponent(`AlgoTradeAI Contact: ${form.name}`)
-    const body    = encodeURIComponent(`Name: ${form.name}\nEmail: ${form.email}\n\n${form.message}`)
-    window.open(`mailto:contact@algotradeai.live?subject=${subject}&body=${body}`)
-    setStatus({ ok:true, msg:'✅ Your email client has opened. Send the email to reach us.' })
+    setBusy(true); setStatus(null)
+    try {
+      const r = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Failed to send.')
+      setStatus({ ok:true, msg:"✅ Message sent! We'll get back to you soon." })
+      setForm({ name:'', email:'', message:'' })
+    } catch(err) {
+      setStatus({ ok:false, msg:'❌ ' + err.message })
+    }
     setBusy(false)
   }
 
