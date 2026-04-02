@@ -1,6 +1,36 @@
 // Featured stocks & ETFs with AI-generated signals — refreshes every 30 min
 
-const SYSTEM = `You are a senior equity strategist. Generate a curated watchlist of featured stocks across key sectors and popular ETFs for today.
+// Normalize sector/category strings so frontend exact-match filtering is reliable
+const SECTOR_ALIASES = {
+  'tech':'Technology','information technology':'Technology','it':'Technology','software':'Technology','semiconductors':'Technology',
+  'health care':'Healthcare','health':'Healthcare','medical':'Healthcare','biotech':'Healthcare','pharma':'Healthcare','pharmaceutical':'Healthcare',
+  'financial':'Finance','financials':'Finance','banking':'Finance','financial services':'Finance','banks':'Finance',
+  'oil':'Energy','oil & gas':'Energy','oil and gas':'Energy','utilities':'Energy','natural resources':'Energy',
+  'consumer discretionary':'Consumer','consumer staples':'Consumer','retail':'Consumer','consumer cyclical':'Consumer',
+  'industrials':'Industrial','manufacturing':'Industrial','defense':'Industrial','aerospace':'Industrial','aerospace & defense':'Industrial',
+  'real estate':'Real Estate','reit':'Real Estate',
+  'materials':'Materials','basic materials':'Materials',
+  'communication':'Communication','communication services':'Communication','telecom':'Communication','telecommunications':'Communication',
+}
+const ETF_CAT_ALIASES = {
+  'indices':'Index','broad market':'Index','broad':'Index','market':'Index',
+  'sector etf':'Sector','sectors':'Sector',
+  'commodity':'Commodities','gold':'Commodities','oil etf':'Commodities',
+  'thematic etf':'Thematic','emerging':'Thematic','innovation':'Thematic','growth':'Thematic',
+}
+
+function normalizeSector(raw) {
+  if (!raw) return 'Other'
+  const key = raw.toLowerCase().trim()
+  return SECTOR_ALIASES[key] || raw.trim()
+}
+function normalizeEtfCat(raw) {
+  if (!raw) return 'Other'
+  const key = raw.toLowerCase().trim()
+  return ETF_CAT_ALIASES[key] || raw.trim()
+}
+
+const SYSTEM = `You are a senior equity strategist. Generate a comprehensive curated watchlist of featured stocks across all major sectors and popular ETF categories for today.
 
 Return ONLY raw JSON — no markdown, no backticks, no explanation:
 {
@@ -13,7 +43,7 @@ Return ONLY raw JSON — no markdown, no backticks, no explanation:
       "change": 1.2,
       "signal": "BUY",
       "confidence": 82,
-      "reason": "Specific 1-2 line reason tied to today's market"
+      "reason": "Specific 1-2 line reason tied to today's market conditions"
     }
   ],
   "etfs": [
@@ -30,13 +60,28 @@ Return ONLY raw JSON — no markdown, no backticks, no explanation:
   ]
 }
 
-STRICT RULES:
-- stocks array: exactly 8 items — cover Technology (2), Healthcare (1), Finance (1), Energy (1), Consumer (1), Industrial (1), plus 1 high-conviction wildcard
-- etfs array: exactly 6 items — always include SPY, QQQ, IWM; then GLD or SLV (commodities), XLE or XLF (sector), and one thematic/emerging ETF
-- signal must be exactly "BUY", "HOLD", or "SELL"
-- confidence: integer 50-95
-- reason: actionable, specific — reference actual macro environment, sector rotation, or technical level. No generic statements.
-- price/change: realistic current market values (approximate is fine)`
+STRICT STOCK RULES — you MUST return exactly these counts per sector (28 total):
+- Technology: exactly 5 stocks (e.g. AAPL, NVDA, MSFT, META, GOOGL)
+- Healthcare: exactly 4 stocks (e.g. UNH, LLY, JNJ, ABBV)
+- Finance: exactly 4 stocks (e.g. JPM, GS, V, BAC)
+- Energy: exactly 4 stocks (e.g. XOM, CVX, COP, SLB)
+- Consumer: exactly 4 stocks (e.g. AMZN, WMT, MCD, COST)
+- Industrial: exactly 4 stocks (e.g. CAT, HON, BA, LMT)
+- Communication: exactly 3 stocks (e.g. NFLX, DIS, T)
+
+STRICT ETF RULES — you MUST return exactly these counts per category (12 total):
+- Index: exactly 4 ETFs (SPY, QQQ, IWM, VTI)
+- Sector: exactly 4 ETFs (XLK, XLF, XLV, XLE)
+- Commodities: exactly 2 ETFs (GLD, USO or SLV)
+- Thematic: exactly 2 ETFs (ARKK or SOXX or any high-conviction thematic)
+
+FIELD RULES:
+- sector must be EXACTLY one of: Technology, Healthcare, Finance, Energy, Consumer, Industrial, Communication
+- category must be EXACTLY one of: Index, Sector, Commodities, Thematic
+- signal must be EXACTLY one of: BUY, HOLD, SELL
+- confidence: integer 55-95
+- reason: 1-2 sentences, actionable, specific to today's macro/sector environment
+- price/change: realistic approximate current market values`
 
 let cache = null
 let cacheTime = 0
@@ -67,7 +112,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         temperature: 0.3,
-        max_tokens: 2500,
+        max_tokens: 5000,
         messages: [
           { role: 'system', content: SYSTEM },
           { role: 'user',   content: `Today is ${today}. Generate the featured stocks and ETFs. Return ONLY the JSON object.` },
@@ -84,6 +129,14 @@ export default async function handler(req, res) {
 
     const featured = JSON.parse(match[0])
     if (!Array.isArray(featured.stocks) || !Array.isArray(featured.etfs)) throw new Error('Invalid structure')
+
+    // Normalize sector/category so frontend exact-match always works
+    featured.stocks = featured.stocks.map(s => ({ ...s, sector: normalizeSector(s.sector) }))
+    featured.etfs   = featured.etfs.map(e => ({ ...e, category: normalizeEtfCat(e.category) }))
+
+    // Deduplicate by ticker
+    const seenS = new Set(); featured.stocks = featured.stocks.filter(s => { if(seenS.has(s.ticker)) return false; seenS.add(s.ticker); return true })
+    const seenE = new Set(); featured.etfs   = featured.etfs.filter(e => { if(seenE.has(e.ticker)) return false; seenE.add(e.ticker); return true })
 
     cache     = featured
     cacheTime = now

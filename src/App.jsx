@@ -1234,26 +1234,63 @@ function FeaturedCard({ item, onAnalyze, type='stock' }) {
 }
 
 function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
-  const [view,    setView]    = useState('stocks') // 'stocks' | 'etfs'
-  const [sector,  setSector]  = useState('All')
+  const [view,   setView]   = useState('stocks') // 'stocks' | 'etfs'
+  const [sector, setSector] = useState('All')
 
-  const SECTORS = ['All','Technology','Healthcare','Finance','Energy','Consumer','Industrial']
-  const ETF_CATS = ['All','Index','Sector','Commodities']
+  // ── Derive filter lists dynamically from actual data ──────────────────────
+  const stockSectors = useMemo(() => {
+    if (!data?.stocks?.length) return ['All']
+    const counts = {}
+    data.stocks.forEach(s => { counts[s.sector] = (counts[s.sector] || 0) + 1 })
+    // Sort by count desc, keep All first
+    const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([k]) => k)
+    return ['All', ...sorted]
+  }, [data?.stocks])
 
-  const visibleStocks = (() => {
+  const etfCats = useMemo(() => {
+    if (!data?.etfs?.length) return ['All']
+    const counts = {}
+    data.etfs.forEach(e => { counts[e.category] = (counts[e.category] || 0) + 1 })
+    const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([k]) => k)
+    return ['All', ...sorted]
+  }, [data?.etfs])
+
+  // Count helper for badges
+  function countFor(list, key, val) {
+    if (val === 'All') return list.length
+    return list.filter(item => item[key] === val).length
+  }
+
+  // ── Filtered lists ────────────────────────────────────────────────────────
+  const visibleStocks = useMemo(() => {
     if (!data?.stocks) return []
-    if (sector === 'All') return data.stocks
-    return data.stocks.filter(s => s.sector === sector)
-  })()
-  const visibleEtfs = (() => {
+    const filtered = sector === 'All'
+      ? data.stocks
+      : data.stocks.filter(s => s.sector === sector)
+    // Sort by confidence desc
+    return [...filtered].sort((a,b) => (b.confidence||0) - (a.confidence||0))
+  }, [data?.stocks, sector])
+
+  const visibleEtfs = useMemo(() => {
     if (!data?.etfs) return []
-    if (sector === 'All') return data.etfs
-    return data.etfs.filter(e => e.category === sector)
-  })()
+    const filtered = sector === 'All'
+      ? data.etfs
+      : data.etfs.filter(e => e.category === sector)
+    return [...filtered].sort((a,b) => (b.confidence||0) - (a.confidence||0))
+  }, [data?.etfs, sector])
+
+  // ── Fallback "related" stocks when filter returns < 3 ────────────────────
+  const fallbackStocks = useMemo(() => {
+    if (visibleStocks.length >= 3 || !data?.stocks || sector === 'All') return []
+    return [...data.stocks]
+      .filter(s => s.sector !== sector)
+      .sort((a,b) => (b.confidence||0) - (a.confidence||0))
+      .slice(0, 4)
+  }, [visibleStocks, data?.stocks, sector])
 
   if (loading) return (
     <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12 }}>
-      {[1,2,3,4].map(i=><SkeletonCard key={i} lines={5} height={12} />)}
+      {[1,2,3,4,5,6].map(i=><SkeletonCard key={i} lines={5} height={12} />)}
     </div>
   )
   if (error) return (
@@ -1264,11 +1301,16 @@ function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
   )
   if (!data) return null
 
+  const activeFilters  = view === 'stocks' ? stockSectors : etfCats
+  const activeList     = view === 'stocks' ? visibleStocks : visibleEtfs
+  const activeDataPool = view === 'stocks' ? (data.stocks||[]) : (data.etfs||[])
+  const countKey       = view === 'stocks' ? 'sector' : 'category'
+
   return (
     <div>
-      {/* Tab + filter row */}
-      <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap' }}>
-        {[['stocks','📈 Stocks'],['etfs','🧺 ETFs']].map(([id,label])=>(
+      {/* Stocks / ETFs toggle */}
+      <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap' }}>
+        {[['stocks',`📈 Stocks (${(data.stocks||[]).length})`],['etfs',`🧺 ETFs (${(data.etfs||[]).length})`]].map(([id,label])=>(
           <button key={id} onClick={()=>{setView(id);setSector('All')}} style={{
             background:view===id?C.brand:'transparent',
             border:`1.5px solid ${view===id?C.brand:C.border}`,
@@ -1276,26 +1318,63 @@ function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
             padding:'7px 18px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:700,transition:'all .15s'
           }}>{label}</button>
         ))}
-        <div style={{ width:1,height:24,background:C.border,margin:'0 4px' }} />
-        {(view==='stocks'?SECTORS:ETF_CATS).map(s=>(
-          <button key={s} onClick={()=>setSector(s)} style={{
-            background:sector===s?C.brandLight:'transparent',
-            border:`1px solid ${sector===s?C.brand:C.border}`,
-            color:sector===s?C.brand:C.text2,
-            padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
-          }}>{s}</button>
-        ))}
         {data.cached && <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>🕐 ~30 min cache</span>}
       </div>
 
+      {/* Dynamic category filter chips with counts */}
+      <div style={{ display:'flex',gap:6,marginBottom:16,flexWrap:'wrap' }}>
+        {activeFilters.map(f => {
+          const cnt = countFor(activeDataPool, countKey, f)
+          const active = sector === f
+          return (
+            <button key={f} onClick={()=>setSector(f)} style={{
+              background: active ? C.brand : C.cardBg,
+              border: `1.5px solid ${active ? C.brand : C.border}`,
+              color: active ? '#fff' : C.text2,
+              padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,
+              transition:'all .15s',display:'flex',alignItems:'center',gap:5,
+            }}>
+              {f}
+              <span style={{
+                background: active ? 'rgba(255,255,255,0.25)' : C.brandLight,
+                color: active ? '#fff' : C.brand,
+                borderRadius:10,padding:'1px 7px',fontSize:11,fontWeight:700,
+              }}>{cnt}</span>
+            </button>
+          )
+        })}
+      </div>
+
       {/* Cards grid */}
-      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12 }}>
-        {(view==='stocks'?visibleStocks:visibleEtfs).map(item=>(
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12,transition:'all .2s' }}>
+        {activeList.map(item=>(
           <FeaturedCard key={item.ticker} item={item} onAnalyze={onAnalyze} type={view==='etfs'?'etf':'stock'} />
         ))}
       </div>
-      {(view==='stocks'?visibleStocks:visibleEtfs).length===0 && (
-        <div style={{ textAlign:'center',padding:40,color:C.text3 }}>No items for this filter</div>
+
+      {/* Empty state with fallback related stocks */}
+      {activeList.length === 0 && (
+        <div style={{ textAlign:'center',padding:'24px 16px',color:C.text3 }}>
+          <div style={{ fontSize:32,marginBottom:8 }}>🔍</div>
+          <div style={{ fontSize:14,fontWeight:600,color:C.text2,marginBottom:4 }}>No {view === 'etfs' ? 'ETFs' : 'stocks'} tagged "{sector}"</div>
+          <div style={{ fontSize:13,color:C.text3 }}>The AI may have used a different category name this session.</div>
+        </div>
+      )}
+
+      {/* Fallback "Related from other sectors" when < 3 results */}
+      {view === 'stocks' && visibleStocks.length > 0 && visibleStocks.length < 3 && fallbackStocks.length > 0 && (
+        <div style={{ marginTop:20 }}>
+          <div style={{ fontSize:12,fontWeight:700,color:C.text3,letterSpacing:'1px',textTransform:'uppercase',marginBottom:10,display:'flex',alignItems:'center',gap:8 }}>
+            <div style={{ flex:1,height:1,background:C.border }} />
+            Top Picks From Other Sectors
+            <div style={{ flex:1,height:1,background:C.border }} />
+          </div>
+          <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12 }}>
+            {fallbackStocks.map(item=>(
+              <FeaturedCard key={item.ticker} item={item} onAnalyze={onAnalyze} type="stock" />
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )
