@@ -81,11 +81,32 @@ FIELD RULES:
 - signal must be EXACTLY one of: BUY, HOLD, SELL
 - confidence: integer 55-95
 - reason: 1-2 sentences, actionable, specific to today's macro/sector environment
-- price/change: realistic approximate current market values`
+- price/change: realistic approximate current market values
+
+JSON SAFETY RULES (critical — parser will reject any violation):
+- Do NOT use backslashes anywhere in text values
+- Do NOT use smart/curly quotes — only straight ASCII quotes
+- Do NOT use em dashes or en dashes — use a regular hyphen instead
+- Do NOT use percent signs preceded by backslash
+- All text values must contain only plain ASCII characters`
+
+// Repair common AI JSON issues before parsing:
+// 1. Remove invalid escape sequences (\% \- \& etc — only \" \\ \/ \b \f \n \r \t \uXXXX are valid)
+// 2. Strip non-ASCII / smart-quote characters that break JSON.parse
+function repairJson(str) {
+  return str
+    .replace(/\\([^"\\\/bfnrtu])/g, '$1')          // invalid escapes → bare char
+    .replace(/[\u2018\u2019]/g, "'")                // smart single quotes
+    .replace(/[\u201C\u201D]/g, '"')                // smart double quotes (risky — see note below)
+    .replace(/[\u2013\u2014]/g, '-')                // en/em dashes
+    .replace(/\u2026/g, '...')                      // ellipsis
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // control chars (not \t\n\r)
+}
 
 let cache = null
 let cacheTime = 0
 const CACHE_TTL = 30 * 60 * 1000
+const CACHE_VERSION = 2  // bump to invalidate old malformed cache across deploys
 
 export default async function handler(req, res) {
   const allowed = process.env.ALLOWED_ORIGIN || '*'
@@ -127,7 +148,14 @@ export default async function handler(req, res) {
     const match = clean.match(/\{[\s\S]*\}/)
     if (!match) throw new Error('No JSON in response')
 
-    const featured = JSON.parse(match[0])
+    const repaired = repairJson(match[0])
+    let featured
+    try {
+      featured = JSON.parse(repaired)
+    } catch (parseErr) {
+      // Last resort: strip everything after the last complete array entry
+      throw new Error('JSON parse failed after repair: ' + parseErr.message)
+    }
     if (!Array.isArray(featured.stocks) || !Array.isArray(featured.etfs)) throw new Error('Invalid structure')
 
     // Normalize sector/category so frontend exact-match always works

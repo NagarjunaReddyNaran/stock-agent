@@ -1757,11 +1757,12 @@ export default function App() {
   async function loadFeatured() {
     setFeaturedLoading(true); setFeaturedError(null)
     try {
-      const cached = sessionStorage.getItem('featured_cache')
+      const CACHE_KEY = 'featured_cache_v2'  // v2 matches api CACHE_VERSION — old key auto-ignored
+      const cached = sessionStorage.getItem(CACHE_KEY)
       if (cached) { const { data:d, ts } = JSON.parse(cached); if (Date.now()-ts < 30*60*1000) { setFeaturedData(d); setFeaturedLoading(false); return } }
       const d = await apiFeatured()
       setFeaturedData(d)
-      try { sessionStorage.setItem('featured_cache', JSON.stringify({ data:d, ts:Date.now() })) } catch {}
+      try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data:d, ts:Date.now() })) } catch {}
     } catch(e) { setFeaturedError(e.message) }
     setFeaturedLoading(false)
   }
