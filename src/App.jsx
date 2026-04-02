@@ -1233,8 +1233,9 @@ function FeaturedCard({ item, onAnalyze, type='stock' }) {
   )
 }
 
-function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
-  const [view,   setView]   = useState('stocks') // 'stocks' | 'etfs'
+// mode: 'stocks' | 'etfs' | 'both' (default 'both')
+function FeaturedSection({ data, loading, error, onAnalyze, onRefresh, mode = 'both' }) {
+  const [view,   setView]   = useState(mode === 'etfs' ? 'etfs' : 'stocks')
   const [sector, setSector] = useState('All')
 
   // ── Derive filter lists dynamically from actual data ──────────────────────
@@ -1308,18 +1309,23 @@ function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
 
   return (
     <div>
-      {/* Stocks / ETFs toggle */}
-      <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap' }}>
-        {[['stocks',`📈 Stocks (${(data.stocks||[]).length})`],['etfs',`🧺 ETFs (${(data.etfs||[]).length})`]].map(([id,label])=>(
-          <button key={id} onClick={()=>{setView(id);setSector('All')}} style={{
-            background:view===id?C.brand:'transparent',
-            border:`1.5px solid ${view===id?C.brand:C.border}`,
-            color:view===id?'#fff':C.text2,
-            padding:'7px 18px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:700,transition:'all .15s'
-          }}>{label}</button>
-        ))}
-        {data.cached && <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>🕐 ~30 min cache</span>}
-      </div>
+      {/* Stocks / ETFs toggle — only shown in 'both' mode */}
+      {mode === 'both' && (
+        <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap' }}>
+          {[['stocks',`📈 Stocks (${(data.stocks||[]).length})`],['etfs',`🧺 ETFs (${(data.etfs||[]).length})`]].map(([id,label])=>(
+            <button key={id} onClick={()=>{setView(id);setSector('All')}} style={{
+              background:view===id?C.brand:'transparent',
+              border:`1.5px solid ${view===id?C.brand:C.border}`,
+              color:view===id?'#fff':C.text2,
+              padding:'7px 18px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:700,transition:'all .15s'
+            }}>{label}</button>
+          ))}
+          {data.cached && <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>🕐 ~30 min cache</span>}
+        </div>
+      )}
+      {mode !== 'both' && data.cached && (
+        <div style={{ fontSize:11,color:C.text4,marginBottom:12 }}>🕐 ~30 min cache</div>
+      )}
 
       {/* Dynamic category filter chips with counts */}
       <div style={{ display:'flex',gap:6,marginBottom:16,flexWrap:'wrap' }}>
@@ -1376,6 +1382,122 @@ function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── MARKET PULSE BAR ────────────────────────────────────────────────────────
+const INDICES = [
+  { sym:'SPY',  label:'S&P 500',   flag:'🇺🇸' },
+  { sym:'QQQ',  label:'NASDAQ',    flag:'💻'   },
+  { sym:'DIA',  label:'Dow Jones', flag:'🏦'   },
+  { sym:'IWM',  label:'Russell',   flag:'📈'   },
+]
+
+function MarketPulseBar({ sentiment, sentimentScore }) {
+  const [prices,  setPrices]  = useState({})
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.allSettled(INDICES.map(idx => apiPrice(idx.sym))).then(results => {
+      const p = {}
+      results.forEach((r,i) => { if (r.status==='fulfilled') p[INDICES[i].sym]=r.value })
+      setPrices(p); setLoading(false)
+    })
+  }, [])
+
+  return (
+    <div style={{ background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:14,padding:'14px 18px',marginBottom:16,boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10 }}>
+        {/* Index tiles */}
+        <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
+          {INDICES.map(idx => {
+            const p   = prices[idx.sym]
+            const up  = p ? p.change >= 0 : null
+            return (
+              <div key={idx.sym} style={{ display:'flex',alignItems:'center',gap:8,padding:'8px 14px',background:C.cardBg2,borderRadius:10,border:`1px solid ${up===true?C.buyBorder:up===false?C.sellBorder:C.border}`,minWidth:120 }}>
+                <span style={{ fontSize:16 }}>{idx.flag}</span>
+                <div>
+                  <div style={{ fontSize:10,color:C.text3,fontWeight:700,letterSpacing:'0.5px',textTransform:'uppercase',marginBottom:2 }}>{idx.label}</div>
+                  {loading ? (
+                    <div style={{ width:70,height:10,background:C.border,borderRadius:3,animation:'shimmer 1.4s infinite' }} />
+                  ) : p ? (
+                    <div style={{ display:'flex',alignItems:'baseline',gap:5 }}>
+                      <span style={{ fontSize:14,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace" }}>{fmt(p.price)}</span>
+                      <span style={{ fontSize:11,fontWeight:700,color:up?C.buy:C.sell }}>{up?'▲':'▼'}{up?'+':''}{p.changePct}%</span>
+                    </div>
+                  ) : <span style={{ fontSize:12,color:C.text4 }}>—</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        {/* Sentiment */}
+        <div style={{ display:'flex',alignItems:'center',gap:8,flexShrink:0 }}>
+          {sentiment ? (
+            <>
+              <span style={{ fontSize:12,color:C.text3,fontWeight:600 }}>Market Mood:</span>
+              <SentimentPill sentiment={sentiment} score={sentimentScore} />
+            </>
+          ) : (
+            <div style={{ width:120,height:22,background:C.border,borderRadius:20,animation:'shimmer 1.4s infinite' }} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── AI TOP PICKS ─────────────────────────────────────────────────────────────
+function AITopPicks({ data, loading, onAnalyze }) {
+  if (loading) return (
+    <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:12,marginBottom:16 }}>
+      {[1,2,3].map(i=><SkeletonCard key={i} lines={4} height={12} />)}
+    </div>
+  )
+  if (!data?.stocks?.length) return null
+
+  const picks = [...data.stocks]
+    .filter(s => s.signal === 'BUY')
+    .sort((a,b) => (b.confidence||0)-(a.confidence||0))
+    .slice(0,3)
+
+  if (!picks.length) return null
+
+  return (
+    <div style={{ marginBottom:16 }}>
+      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:6 }}>
+        <div>
+          <div style={{ fontSize:12,fontWeight:700,color:C.brand,letterSpacing:'1.5px',textTransform:'uppercase' }}>🧠 AI Top Picks Today</div>
+          <div style={{ fontSize:12,color:C.text3,marginTop:2 }}>Highest-confidence BUY signals from AI analysis</div>
+        </div>
+      </div>
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:12 }}>
+        {picks.map((s,i) => {
+          const rankColors = ['#f59e0b','#9ca3af','#b45309']
+          return (
+            <div key={s.ticker} style={{ background:`linear-gradient(135deg,${C.buyBg},${C.cardBg})`,border:`1.5px solid ${C.buyBorder}`,borderRadius:14,padding:'16px 18px',display:'flex',gap:14,alignItems:'flex-start',boxShadow:'0 2px 8px rgba(5,150,105,0.08)',transition:'all .2s' }}
+              onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 6px 20px rgba(5,150,105,0.15)';e.currentTarget.style.transform='translateY(-1px)'}}
+              onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 2px 8px rgba(5,150,105,0.08)';e.currentTarget.style.transform='none'}}>
+              {/* Rank */}
+              <div style={{ width:28,height:28,borderRadius:8,background:rankColors[i]+'20',border:`2px solid ${rankColors[i]}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:800,color:rankColors[i],flexShrink:0 }}>{i+1}</div>
+              {/* Info */}
+              <div style={{ flex:1,minWidth:0 }}>
+                <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap' }}>
+                  <span style={{ fontSize:16,fontWeight:800,color:C.text1,fontFamily:"'DM Mono',monospace" }}>{s.ticker}</span>
+                  <span style={{ fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:10,color:C.buy,background:C.buyBg,border:`1px solid ${C.buyBorder}` }}>BUY</span>
+                  <span style={{ fontSize:11,color:C.text3,background:C.cardBg2,border:`1px solid ${C.border}`,borderRadius:6,padding:'1px 7px' }}>{s.sector}</span>
+                </div>
+                <div style={{ fontSize:12,color:C.text2,lineHeight:1.55,marginBottom:8,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden' }}>{s.reason}</div>
+                <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between' }}>
+                  <span style={{ fontSize:12,fontWeight:700,color:s.confidence>=80?C.buy:C.warning }}>⚡ {s.confidence}% confidence</span>
+                  <button onClick={()=>onAnalyze(s.ticker)} style={{ background:C.buy,border:'none',color:'#fff',padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:700 }}>Analyze ▸</button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -1599,6 +1721,7 @@ export default function App() {
       if (!trendingData  && !trendingLoading)  loadTrending()
       if (!earningsData  && !earningsLoading)  loadEarnings()
       if (!featuredData  && !featuredLoading)  loadFeatured()
+      if (!mktNewsData   && !mktNewsLoading)   loadMarketNews()  // needed for sentiment
     }
     if (tab === 'NEWS' && !sym) {
       if (!mktNewsData && !mktNewsLoading) loadMarketNews()
@@ -1707,9 +1830,10 @@ export default function App() {
     <div style={{ background:C.pageBg,minHeight:'100dvh',fontFamily:"'DM Sans',sans-serif",color:C.text1 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap');
-        @keyframes spin   { to{transform:rotate(360deg)} }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @keyframes spin    { to{transform:rotate(360deg)} }
+        @keyframes fadeUp  { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
         html{font-size:16px}
         body{background:${C.pageBg};-webkit-font-smoothing:antialiased}
@@ -2161,11 +2285,24 @@ export default function App() {
         {tab === 'MARKETS' && (
           <div style={{ animation:'fadeUp .3s ease' }}>
 
-            {/* Featured Stocks & ETFs */}
-            <Card style={{ marginBottom:20 }}>
-              <SectionTitle>⭐ Featured Stocks &amp; ETFs</SectionTitle>
+            {/* ── 1. MARKET PULSE BAR ── */}
+            <MarketPulseBar
+              sentiment={mktNewsData?.sentiment}
+              sentimentScore={mktNewsData?.sentimentScore}
+            />
+
+            {/* ── 2. AI TOP PICKS ── */}
+            <AITopPicks
+              data={featuredData}
+              loading={featuredLoading}
+              onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
+            />
+
+            {/* ── 3. STOCKS BY SECTOR ── */}
+            <Card style={{ marginBottom:16 }}>
+              <SectionTitle>📊 Stocks by Sector</SectionTitle>
               <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
-                AI-curated selection across major sectors and popular ETF categories. Filter by sector and click <strong>Full Analysis ▸</strong> for a deep dive.
+                AI-curated picks across major sectors, sorted by confidence. Use the filter tabs to browse by industry.
               </div>
               <FeaturedSection
                 data={featuredData}
@@ -2173,22 +2310,35 @@ export default function App() {
                 error={featuredError}
                 onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
                 onRefresh={loadFeatured}
+                mode="stocks"
               />
             </Card>
 
-            {/* Trending Stocks */}
-            <Card style={{ marginBottom:20 }}>
-              <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4,flexWrap:'wrap',gap:8 }}>
-                <div>
-                  <SectionTitle>🔥 Top 10 Trending Stocks Today</SectionTitle>
-                  <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
-                    AI-powered ranking based on analyst sentiment, volume, news catalysts, institutional activity, macro events, and options signals.
-                    Click <strong>Analyze ▸</strong> on any stock for a full trading signal.
-                  </div>
-                </div>
+            {/* ── 4. ETFs & FUNDS ── */}
+            <Card style={{ marginBottom:16 }}>
+              <SectionTitle>🧺 ETFs &amp; Funds</SectionTitle>
+              <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                Popular ETFs across index, sector, commodity, and thematic categories with AI signals.
+              </div>
+              <FeaturedSection
+                data={featuredData}
+                loading={featuredLoading}
+                error={featuredError}
+                onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
+                onRefresh={loadFeatured}
+                mode="etfs"
+              />
+            </Card>
+
+            {/* ── 5. MARKET MOVERS ── */}
+            <Card style={{ marginBottom:16 }}>
+              <SectionTitle>🔥 Market Movers Today</SectionTitle>
+              <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                AI-ranked by momentum — analyst upgrades, unusual volume, macro catalysts, and institutional activity.
+                Click <strong>Analyze ▸</strong> for a full signal.
               </div>
               <TrendingStocks
-                onAnalyze={s => { setSym(s); setTab('ANALYZE') }}
+                onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
                 data={trendingData}
                 loading={trendingLoading}
                 error={trendingError}
@@ -2196,20 +2346,21 @@ export default function App() {
               />
             </Card>
 
-            {/* Earnings Calendar */}
+            {/* ── 6. EARNINGS CALENDAR ── */}
             <Card>
               <SectionTitle>📅 Earnings Calendar — This Week</SectionTitle>
               <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
-                Major US and Canadian companies reporting earnings this week. Click <strong>Analyze ▸</strong> to get an AI signal before earnings.
+                Major companies reporting this week. Analyze before earnings to see AI risk/reward signals.
               </div>
               <EarningsCalendar
-                onAnalyze={s => { setSym(s); setTab('ANALYZE') }}
+                onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
                 data={earningsData}
                 loading={earningsLoading}
                 error={earningsError}
                 onRefresh={loadEarnings}
               />
             </Card>
+
           </div>
         )}
 
