@@ -18,7 +18,7 @@ IMPORTANT: You will be given the LIVE current price. Base ALL price targets on i
 - Target price = 10-25% upside medium-term, 5-15% short-term
 
 OUTPUT - return ONLY raw JSON, no markdown, no backticks:
-{"ticker":"SYMBOL","companyName":"Full Name","decision":"BUY","confidence":"High","riskLevel":"Low","entryPrice":150.00,"stopLoss":139.50,"targetPrice":172.50,"reasoning":"Detailed paragraph","signals":{"newsCatalyst":"...","analystSentiment":"...","financialMetrics":"...","technicalIndicators":"...","institutionalActivity":"..."},"sectorAllocation":"Technology","keyRisks":["risk1","risk2","risk3"],"timeHorizon":"Medium-term (months)"}`
+{"ticker":"SYMBOL","companyName":"Full Name","decision":"BUY","confidence":"High","riskLevel":"Low","entryPrice":150.00,"stopLoss":139.50,"targetPrice":172.50,"reasoning":"Detailed paragraph","signals":{"newsCatalyst":"...","analystSentiment":"...","financialMetrics":"...","technicalIndicators":"...","institutionalActivity":"..."},"sectorAllocation":"Technology","keyRisks":["risk1","risk2","risk3"],"timeHorizon":"Medium-term (months)","whyBuy":["Specific bullish signal 1 with data","Specific bullish signal 2 with data","Specific bullish signal 3 with data"],"whyNotBuy":["Key risk or bearish signal 1","Key risk or bearish signal 2","Key risk or bearish signal 3"],"finalInsight":{"bias":"Bullish","confidenceLevel":"High","summary":"2-3 sentence actionable conclusion combining all signals into a clear trade rationale"},"aiSummary":"One precise actionable sentence — the single most important thing to know about this trade right now"}`
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const C = {
@@ -91,7 +91,9 @@ const apiNews   = async sym => { const r=await fetch(`/api/news?symbol=${encodeU
 const apiSearch = async q   => { const r=await fetch(`/api/search?q=${encodeURIComponent(q)}`);        const d=await r.json(); return d.results||[] }
 const apiAlert    = async body=> { const r=await fetch('/api/alert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
 const apiTrending = async () => { const r=await fetch('/api/trending'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
-const apiEarnings = async () => { const r=await fetch('/api/earnings'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiEarnings    = async () => { const r=await fetch('/api/earnings'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiMarketNews  = async () => { const r=await fetch('/api/market-news'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
+const apiFeatured    = async () => { const r=await fetch('/api/featured'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed'); return d }
 
 // ─── BASE COMPONENTS ──────────────────────────────────────────────────────────
 function Spinner({ size=20 }) {
@@ -988,6 +990,489 @@ function PopularChips({ sym, onSelect }) {
   )
 }
 
+// ─── SKELETON LOADER ──────────────────────────────────────────────────────────
+function SkeletonCard({ lines=3, height=16 }) {
+  return (
+    <div style={{ background:C.cardBg,borderRadius:16,border:`1px solid ${C.border}`,padding:20,boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+      <style>{`@keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}.sk{background:linear-gradient(90deg,#f0f0f0 25%,#e8e8e8 50%,#f0f0f0 75%);background-size:800px 100%;animation:shimmer 1.4s infinite;border-radius:6px}`}</style>
+      {Array.from({length:lines}).map((_,i)=>(
+        <div key={i} className="sk" style={{ height,marginBottom:i<lines-1?12:0,width:i===lines-1?'60%':'100%' }} />
+      ))}
+    </div>
+  )
+}
+
+// ─── SENTIMENT PILL ───────────────────────────────────────────────────────────
+function SentimentPill({ sentiment, score }) {
+  const cfg = {
+    Bullish: { bg:'#ecfdf5', border:'#6ee7b7', text:'#059669', icon:'▲' },
+    Bearish: { bg:'#fef2f2', border:'#fca5a5', text:'#dc2626', icon:'▼' },
+    Neutral: { bg:'#f1f5f9', border:'#cbd5e1', text:'#64748b', icon:'◆' },
+  }
+  const s = cfg[sentiment] || cfg.Neutral
+  return (
+    <span style={{ display:'inline-flex',alignItems:'center',gap:5,padding:'4px 12px',borderRadius:20,fontSize:12,fontWeight:700,color:s.text,background:s.bg,border:`1px solid ${s.border}` }}>
+      {s.icon} {sentiment} Sentiment{score!=null?` · ${score}/100`:''}
+    </span>
+  )
+}
+
+// ─── WHY BUY / WHY NOT BUY ────────────────────────────────────────────────────
+function WhyBuySection({ whyBuy, whyNotBuy, finalInsight, aiSummary }) {
+  if (!whyBuy?.length && !whyNotBuy?.length) return null
+  const bias = finalInsight?.bias || 'Neutral'
+  const biasCfg = {
+    Bullish: { color:C.buy,   bg:C.buyBg,   border:C.buyBorder,   icon:'▲' },
+    Bearish: { color:C.sell,  bg:C.sellBg,  border:C.sellBorder,  icon:'▼' },
+    Neutral: { color:C.hold,  bg:C.holdBg,  border:C.holdBorder,  icon:'◆' },
+  }
+  const bc = biasCfg[bias] || biasCfg.Neutral
+
+  return (
+    <div style={{ marginBottom:14, animation:'fadeUp .4s ease' }}>
+      {/* AI Summary strip */}
+      {aiSummary && (
+        <div style={{ background:`linear-gradient(135deg,${C.brand}10,${C.brandMid}10)`,border:`1px solid ${C.brand}30`,borderRadius:14,padding:'14px 18px',marginBottom:12,display:'flex',gap:12,alignItems:'flex-start' }}>
+          <span style={{ fontSize:20,flexShrink:0 }}>🧠</span>
+          <div>
+            <div style={{ fontSize:11,fontWeight:700,color:C.brand,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:4 }}>AI Insight</div>
+            <div style={{ fontSize:14,color:C.text1,fontWeight:500,lineHeight:1.65 }}>{aiSummary}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Why Buy / Why Not Buy grid */}
+      <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12 }}>
+        {/* Why Buy */}
+        <div style={{ background:C.buyBg,border:`1.5px solid ${C.buyBorder}`,borderRadius:14,padding:'18px 20px' }}>
+          <div style={{ fontSize:13,fontWeight:700,color:C.buy,marginBottom:12,display:'flex',alignItems:'center',gap:6 }}>
+            <span style={{ background:C.buy,color:'#fff',borderRadius:'50%',width:20,height:20,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:11,flexShrink:0 }}>✓</span>
+            Why Consider Buying
+          </div>
+          {(whyBuy||[]).map((r,i)=>(
+            <div key={i} style={{ display:'flex',gap:10,marginBottom:i<(whyBuy.length-1)?10:0,alignItems:'flex-start' }}>
+              <span style={{ color:C.buy,fontWeight:700,fontSize:15,flexShrink:0,lineHeight:1.4 }}>▸</span>
+              <span style={{ fontSize:13,color:C.text2,lineHeight:1.6 }}>{r}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Why Not Buy */}
+        <div style={{ background:C.sellBg,border:`1.5px solid ${C.sellBorder}`,borderRadius:14,padding:'18px 20px' }}>
+          <div style={{ fontSize:13,fontWeight:700,color:C.sell,marginBottom:12,display:'flex',alignItems:'center',gap:6 }}>
+            <span style={{ background:C.sell,color:'#fff',borderRadius:'50%',width:20,height:20,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:11,flexShrink:0 }}>!</span>
+            Why Be Cautious
+          </div>
+          {(whyNotBuy||[]).map((r,i)=>(
+            <div key={i} style={{ display:'flex',gap:10,marginBottom:i<(whyNotBuy.length-1)?10:0,alignItems:'flex-start' }}>
+              <span style={{ color:C.sell,fontWeight:700,fontSize:15,flexShrink:0,lineHeight:1.4 }}>▸</span>
+              <span style={{ fontSize:13,color:C.text2,lineHeight:1.6 }}>{r}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Final Insight */}
+      {finalInsight && (
+        <div style={{ background:bc.bg,border:`2px solid ${bc.border}`,borderRadius:14,padding:'18px 20px',display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap' }}>
+          <div style={{ flexShrink:0,textAlign:'center',minWidth:80 }}>
+            <div style={{ fontSize:11,color:C.text3,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:4 }}>Overall Bias</div>
+            <div style={{ fontSize:20,fontWeight:800,color:bc.color,fontFamily:"'Syne',sans-serif" }}>{bc.icon} {bias}</div>
+            <div style={{ fontSize:11,fontWeight:600,color:bc.color,marginTop:4 }}>{finalInsight.confidenceLevel} Confidence</div>
+          </div>
+          <div style={{ flex:1,minWidth:200 }}>
+            <div style={{ fontSize:12,fontWeight:700,color:bc.color,letterSpacing:'1px',textTransform:'uppercase',marginBottom:6 }}>Final Insight</div>
+            <div style={{ fontSize:14,color:C.text2,lineHeight:1.75 }}>{finalInsight.summary}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── GLOBAL NEWS SECTION ──────────────────────────────────────────────────────
+const IMPACT_COLORS = {
+  High:   { bg:'#fef2f2', border:'#fca5a5', text:'#dc2626' },
+  Medium: { bg:'#fffbeb', border:'#fcd34d', text:'#b45309' },
+  Low:    { bg:'#f8fafc', border:'#e2e8f0', text:'#64748b' },
+}
+const SECTOR_COLORS = {
+  Technology:'#4f46e5', Healthcare:'#0891b2', Finance:'#059669',
+  Energy:'#d97706', Consumer:'#7c3aed', Industrial:'#64748b', 'General Market':'#6b7280',
+}
+
+function GlobalNewsSection({ data, loading, error, onRefresh }) {
+  const [filter, setFilter] = useState('All')
+  const impacts = ['All','High','Medium','Low']
+
+  const articles = (() => {
+    if (!data?.articles) return []
+    if (filter === 'All') return data.articles
+    return data.articles.filter(a => a.impact === filter)
+  })()
+
+  if (loading) return (
+    <div style={{ display:'flex',flexDirection:'column',gap:12 }}>
+      {[1,2,3].map(i=><SkeletonCard key={i} lines={3} height={14} />)}
+    </div>
+  )
+
+  if (error) return (
+    <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'14px 18px',color:C.sell,fontSize:14 }}>
+      ⚠ {error}
+      <button onClick={onRefresh} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 10px',borderRadius:8,cursor:'pointer',fontSize:12 }}>Retry</button>
+    </div>
+  )
+
+  if (!data) return null
+
+  return (
+    <div>
+      {/* Sentiment header */}
+      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10 }}>
+        <div style={{ display:'flex',alignItems:'center',gap:10,flexWrap:'wrap' }}>
+          <SentimentPill sentiment={data.sentiment} score={data.sentimentScore} />
+          {data.cached && <span style={{ fontSize:11,color:C.text4 }}>🕐 Cached · refreshes every 15 min</span>}
+        </div>
+        <div style={{ display:'flex',gap:6,flexWrap:'wrap',alignItems:'center' }}>
+          <span style={{ fontSize:12,color:C.text3,fontWeight:600 }}>Filter:</span>
+          {impacts.map(imp=>(
+            <button key={imp} onClick={()=>setFilter(imp)} style={{
+              background:filter===imp?C.brandLight:'transparent',
+              border:`1px solid ${filter===imp?C.brand:C.border}`,
+              color:filter===imp?C.brand:C.text2,
+              padding:'4px 11px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
+            }}>{imp}</button>
+          ))}
+          <button onClick={onRefresh} style={{ background:C.brandLight,border:`1px solid ${C.brand}30`,color:C.brand,padding:'4px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600 }}>↻</button>
+        </div>
+      </div>
+
+      {articles.length === 0 ? (
+        <div style={{ textAlign:'center',padding:40,color:C.text3 }}>No articles for this filter</div>
+      ) : (
+        <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
+          {articles.map((a,i) => {
+            const ic = IMPACT_COLORS[a.impact] || IMPACT_COLORS.Low
+            return (
+              <a key={a.id||i} href={a.url} target="_blank" rel="noreferrer" style={{ textDecoration:'none' }}>
+                <div style={{ background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:12,padding:'15px 18px',transition:'all .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.04)' }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.brand;e.currentTarget.style.boxShadow=`0 4px 16px rgba(79,70,229,0.1)`}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)'}}>
+                  <div style={{ display:'flex',alignItems:'flex-start',gap:10,marginBottom:8,flexWrap:'wrap' }}>
+                    <span style={{ fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:6,color:ic.text,background:ic.bg,border:`1px solid ${ic.border}`,flexShrink:0,whiteSpace:'nowrap' }}>
+                      {a.impact} Impact
+                    </span>
+                    {(a.sectors||[]).map(sec=>(
+                      <span key={sec} style={{ fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:6,color:(SECTOR_COLORS[sec]||C.brand),background:(SECTOR_COLORS[sec]||C.brand)+'15',border:`1px solid ${(SECTOR_COLORS[sec]||C.brand)}30`,flexShrink:0 }}>{sec}</span>
+                    ))}
+                    <span style={{ marginLeft:'auto',fontSize:11,color:C.text4,flexShrink:0,whiteSpace:'nowrap' }}>{timeAgo(a.datetime)}</span>
+                  </div>
+                  <div style={{ fontSize:14,fontWeight:600,color:C.text1,lineHeight:1.55,marginBottom:6 }}>{a.headline}</div>
+                  {a.summary && <div style={{ fontSize:12,color:C.text3,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',marginBottom:6 }}>{a.summary}</div>}
+                  <div style={{ fontSize:12,fontWeight:600,color:C.brand }}>{a.source} ↗</div>
+                </div>
+              </a>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── FEATURED STOCKS & ETFs SECTION ──────────────────────────────────────────
+const SIG_CFG = {
+  BUY:  { bg:'#ecfdf5', border:'#6ee7b7', text:'#059669' },
+  HOLD: { bg:'#fffbeb', border:'#fcd34d', text:'#b45309' },
+  SELL: { bg:'#fef2f2', border:'#fca5a5', text:'#dc2626' },
+}
+
+function FeaturedCard({ item, onAnalyze, type='stock' }) {
+  const sc  = SIG_CFG[item.signal] || SIG_CFG.HOLD
+  const up  = (item.change||0) >= 0
+  const cat = type==='etf' ? item.category : item.sector
+  const catColor = SECTOR_COLORS[cat] || C.brand
+  return (
+    <div style={{ background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:14,padding:'16px 18px',display:'flex',flexDirection:'column',gap:10,boxShadow:'0 1px 3px rgba(0,0,0,0.05)',transition:'all .2s',minWidth:0 }}
+      onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 6px 20px rgba(79,70,229,0.1)';e.currentTarget.style.borderColor=C.brand+'40'}}
+      onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.05)';e.currentTarget.style.borderColor=C.border}}>
+      {/* Header row */}
+      <div style={{ display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8 }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:16,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace" }}>{item.ticker}</div>
+          <div style={{ fontSize:12,color:C.text3,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{item.name}</div>
+        </div>
+        <span style={{ fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:12,color:sc.text,background:sc.bg,border:`1px solid ${sc.border}`,whiteSpace:'nowrap',flexShrink:0 }}>{item.signal}</span>
+      </div>
+      {/* Price */}
+      <div style={{ display:'flex',alignItems:'center',gap:10 }}>
+        <span style={{ fontSize:17,fontWeight:700,color:C.text1,fontFamily:"'DM Mono',monospace" }}>${Number(item.price||0).toFixed(2)}</span>
+        <span style={{ fontSize:12,fontWeight:600,color:up?C.buy:C.sell }}>{up?'▲':'▼'} {up?'+':''}{Number(item.change||0).toFixed(2)}%</span>
+      </div>
+      {/* Confidence bar */}
+      <div>
+        <div style={{ display:'flex',justifyContent:'space-between',fontSize:11,color:C.text3,marginBottom:4 }}>
+          <span>Confidence</span><span style={{ fontWeight:700,color:item.confidence>=80?C.buy:item.confidence>=65?C.warning:C.sell }}>{item.confidence}%</span>
+        </div>
+        <div style={{ height:4,background:C.border,borderRadius:2,overflow:'hidden' }}>
+          <div style={{ width:`${item.confidence}%`,height:'100%',background:item.confidence>=80?C.buy:item.confidence>=65?C.warning:C.sell,borderRadius:2,transition:'width .6s' }} />
+        </div>
+      </div>
+      {/* Category + Reason */}
+      <div>
+        <span style={{ fontSize:11,fontWeight:600,color:catColor,background:catColor+'15',border:`1px solid ${catColor}30`,borderRadius:6,padding:'2px 8px' }}>{cat}</span>
+      </div>
+      <div style={{ fontSize:12,color:C.text2,lineHeight:1.6 }}>{item.reason}</div>
+      {/* Action */}
+      <button onClick={()=>onAnalyze(item.ticker)}
+        style={{ background:C.brand,border:'none',color:'#fff',padding:'8px',borderRadius:10,cursor:'pointer',fontSize:12,fontWeight:700,transition:'all .2s',marginTop:'auto' }}>
+        Full Analysis ▸
+      </button>
+    </div>
+  )
+}
+
+function FeaturedSection({ data, loading, error, onAnalyze, onRefresh }) {
+  const [view,    setView]    = useState('stocks') // 'stocks' | 'etfs'
+  const [sector,  setSector]  = useState('All')
+
+  const SECTORS = ['All','Technology','Healthcare','Finance','Energy','Consumer','Industrial']
+  const ETF_CATS = ['All','Index','Sector','Commodities']
+
+  const visibleStocks = (() => {
+    if (!data?.stocks) return []
+    if (sector === 'All') return data.stocks
+    return data.stocks.filter(s => s.sector === sector)
+  })()
+  const visibleEtfs = (() => {
+    if (!data?.etfs) return []
+    if (sector === 'All') return data.etfs
+    return data.etfs.filter(e => e.category === sector)
+  })()
+
+  if (loading) return (
+    <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12 }}>
+      {[1,2,3,4].map(i=><SkeletonCard key={i} lines={5} height={12} />)}
+    </div>
+  )
+  if (error) return (
+    <div style={{ background:C.sellBg,border:`1px solid ${C.sellBorder}`,borderRadius:12,padding:'14px 18px',color:C.sell,fontSize:14 }}>
+      ⚠ {error}
+      <button onClick={onRefresh} style={{ marginLeft:12,background:'transparent',border:`1px solid ${C.sell}`,color:C.sell,padding:'4px 10px',borderRadius:8,cursor:'pointer',fontSize:12 }}>Retry</button>
+    </div>
+  )
+  if (!data) return null
+
+  return (
+    <div>
+      {/* Tab + filter row */}
+      <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap' }}>
+        {[['stocks','📈 Stocks'],['etfs','🧺 ETFs']].map(([id,label])=>(
+          <button key={id} onClick={()=>{setView(id);setSector('All')}} style={{
+            background:view===id?C.brand:'transparent',
+            border:`1.5px solid ${view===id?C.brand:C.border}`,
+            color:view===id?'#fff':C.text2,
+            padding:'7px 18px',borderRadius:10,cursor:'pointer',fontSize:13,fontWeight:700,transition:'all .15s'
+          }}>{label}</button>
+        ))}
+        <div style={{ width:1,height:24,background:C.border,margin:'0 4px' }} />
+        {(view==='stocks'?SECTORS:ETF_CATS).map(s=>(
+          <button key={s} onClick={()=>setSector(s)} style={{
+            background:sector===s?C.brandLight:'transparent',
+            border:`1px solid ${sector===s?C.brand:C.border}`,
+            color:sector===s?C.brand:C.text2,
+            padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s'
+          }}>{s}</button>
+        ))}
+        {data.cached && <span style={{ marginLeft:'auto',fontSize:11,color:C.text4 }}>🕐 ~30 min cache</span>}
+      </div>
+
+      {/* Cards grid */}
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12 }}>
+        {(view==='stocks'?visibleStocks:visibleEtfs).map(item=>(
+          <FeaturedCard key={item.ticker} item={item} onAnalyze={onAnalyze} type={view==='etfs'?'etf':'stock'} />
+        ))}
+      </div>
+      {(view==='stocks'?visibleStocks:visibleEtfs).length===0 && (
+        <div style={{ textAlign:'center',padding:40,color:C.text3 }}>No items for this filter</div>
+      )}
+    </div>
+  )
+}
+
+// ─── ONBOARDING BANNER ────────────────────────────────────────────────────────
+function OnboardingBanner({ onDismiss }) {
+  return (
+    <div style={{ background:`linear-gradient(135deg,${C.brand},#7c3aed)`,borderRadius:16,padding:'24px 26px',marginBottom:16,color:'#fff',position:'relative',animation:'fadeUp .4s ease' }}>
+      <button onClick={onDismiss} aria-label="Dismiss"
+        style={{ position:'absolute',top:12,right:14,background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:13,fontWeight:600 }}>
+        ✕
+      </button>
+      <div style={{ fontSize:22,marginBottom:8 }}>👋 Welcome to AlgoTradeAI</div>
+      <div style={{ fontSize:15,fontWeight:600,marginBottom:6,lineHeight:1.5 }}>
+        AI-powered BUY / SELL / HOLD signals — free, no signup needed
+      </div>
+      <div style={{ fontSize:13,opacity:0.88,lineHeight:1.7,marginBottom:16 }}>
+        Search any stock (US, India, Canada) → get live price, entry point, stop loss, target price, and a full risk/reward breakdown powered by AI in seconds.
+      </div>
+      <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
+        {['🔍 Search any ticker','📈 AI BUY/SELL/HOLD','🎯 Entry · Stop · Target','📊 TradingView Charts','📰 Live News Feed','⭐ Personal Watchlist'].map(f=>(
+          <span key={f} style={{ background:'rgba(255,255,255,0.18)',border:'1px solid rgba(255,255,255,0.3)',borderRadius:20,padding:'4px 12px',fontSize:12,fontWeight:600 }}>{f}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── FOOTER ───────────────────────────────────────────────────────────────────
+function Footer({ onDisclaimer, onContact }) {
+  return (
+    <footer style={{ background:C.cardBg,borderTop:`1px solid ${C.border}`,marginTop:32 }}>
+      <div style={{ maxWidth:1100,margin:'0 auto',padding:'36px 24px 24px',display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:32 }}>
+        {/* Brand */}
+        <div>
+          <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:12 }}>
+            <div style={{ width:32,height:32,background:`linear-gradient(135deg,${C.brand},#7c3aed)`,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18 }}>📈</div>
+            <span style={{ fontFamily:"'Syne',sans-serif",fontSize:16,fontWeight:800,color:C.text1 }}>AlgoTrade<span style={{color:C.brand}}>AI</span></span>
+          </div>
+          <p style={{ fontSize:13,color:C.text3,lineHeight:1.7,maxWidth:220 }}>
+            Free AI-powered stock analysis platform. Get BUY/SELL/HOLD signals with live prices, technical analysis, and risk management — no signup required.
+          </p>
+        </div>
+
+        {/* Features */}
+        <div>
+          <div style={{ fontSize:12,fontWeight:700,color:C.text1,letterSpacing:'1px',textTransform:'uppercase',marginBottom:14 }}>Platform</div>
+          {[
+            ['🤖','AI Stock Signals'],['🔥','Trending Markets'],['📊','Live Charts'],
+            ['📰','Market News'],['⭐','Watchlist'],['🔔','Email Alerts'],
+          ].map(([icon,label])=>(
+            <div key={label} style={{ fontSize:13,color:C.text2,marginBottom:8,display:'flex',gap:8 }}>
+              <span>{icon}</span>{label}
+            </div>
+          ))}
+        </div>
+
+        {/* Markets */}
+        <div>
+          <div style={{ fontSize:12,fontWeight:700,color:C.text1,letterSpacing:'1px',textTransform:'uppercase',marginBottom:14 }}>Markets</div>
+          {[['🇺🇸','US Stocks (NYSE / NASDAQ)'],['🇮🇳','Indian Stocks (NSE / BSE)'],['🇨🇦','Canadian Stocks (TSX)'],['📈','ETFs & Index Funds'],['₿','Crypto via Yahoo Finance']].map(([icon,label])=>(
+            <div key={label} style={{ fontSize:13,color:C.text2,marginBottom:8,display:'flex',gap:8 }}>
+              <span>{icon}</span>{label}
+            </div>
+          ))}
+        </div>
+
+        {/* Legal */}
+        <div>
+          <div style={{ fontSize:12,fontWeight:700,color:C.text1,letterSpacing:'1px',textTransform:'uppercase',marginBottom:14 }}>Legal & Contact</div>
+          <button onClick={onDisclaimer} style={{ display:'block',background:'none',border:'none',fontSize:13,color:C.brand,cursor:'pointer',fontWeight:600,marginBottom:10,padding:0,textAlign:'left' }}>
+            📋 Disclaimer
+          </button>
+          <button onClick={onContact} style={{ display:'block',background:'none',border:'none',fontSize:13,color:C.brand,cursor:'pointer',fontWeight:600,marginBottom:10,padding:0,textAlign:'left' }}>
+            ✉ Contact Us
+          </button>
+          <div style={{ fontSize:12,color:C.text3,lineHeight:1.7,marginTop:8 }}>
+            Powered by Groq AI (Llama 3.3-70B), Finnhub, Yahoo Finance & TradingView.
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom bar */}
+      <div style={{ borderTop:`1px solid ${C.border}`,padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8 }}>
+        <div style={{ fontSize:12,color:C.text4 }}>© 2025 AlgoTradeAI · All rights reserved</div>
+        <div style={{ fontSize:12,color:C.text4,textAlign:'right' }}>
+          ⚠ For educational purposes only · Not financial advice · All trading involves risk
+        </div>
+      </div>
+    </footer>
+  )
+}
+
+// ─── DISCLAIMER MODAL ─────────────────────────────────────────────────────────
+function DisclaimerModal({ onClose }) {
+  return (
+    <div style={{ position:'fixed',inset:0,zIndex:500,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',padding:16 }} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
+      <div style={{ background:C.cardBg,borderRadius:18,maxWidth:560,width:'100%',maxHeight:'85vh',overflow:'auto',padding:32,boxShadow:'0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20 }}>
+          <div style={{ fontSize:20,fontWeight:800,color:C.text1,fontFamily:"'Syne',sans-serif" }}>⚠ Disclaimer</div>
+          <button onClick={onClose} style={{ background:C.cardBg2,border:`1px solid ${C.border}`,color:C.text2,borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:14,fontWeight:600 }}>Close</button>
+        </div>
+        {[
+          { title:'Not Financial Advice', body:'AlgoTradeAI is an educational and informational tool only. Nothing on this platform constitutes financial advice, investment advice, trading advice, or any other type of advice. The AI-generated signals, price targets, and analysis are for educational purposes only.' },
+          { title:'Do Your Own Research', body:'You should always conduct your own due diligence before making any investment decisions. Consult with a licensed financial advisor before trading. Past AI signal accuracy does not guarantee future results.' },
+          { title:'Risk Disclosure', body:'All forms of trading and investment carry significant risk of loss. You could lose some or all of your invested capital. Never invest more than you can afford to lose. Cryptocurrency, stock, and derivatives markets are highly volatile.' },
+          { title:'AI Limitations', body:'The AI analysis is generated by a large language model (Groq/Llama) which may have knowledge cutoffs, inaccuracies, or hallucinations. Always verify prices and signals through your own broker or financial data provider before acting.' },
+          { title:'No Liability', body:'AlgoTradeAI and its operators assume no liability for any trading losses, financial damages, or other losses incurred as a result of using this platform. Use at your own risk.' },
+        ].map(({title,body})=>(
+          <div key={title} style={{ marginBottom:18 }}>
+            <div style={{ fontSize:14,fontWeight:700,color:C.text1,marginBottom:6 }}>{title}</div>
+            <div style={{ fontSize:13,color:C.text2,lineHeight:1.75 }}>{body}</div>
+          </div>
+        ))}
+        <button onClick={onClose} style={{ width:'100%',background:C.brand,border:'none',color:'#fff',padding:'13px',borderRadius:12,cursor:'pointer',fontSize:15,fontWeight:700,marginTop:8 }}>
+          I Understand
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── CONTACT MODAL ────────────────────────────────────────────────────────────
+function ContactModal({ onClose }) {
+  const [form,   setForm]   = useState({ name:'', email:'', message:'' })
+  const [status, setStatus] = useState(null)
+  const [busy,   setBusy]   = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.name || !form.email || !form.message) { setStatus({ ok:false, msg:'Please fill in all fields.' }); return }
+    setBusy(true)
+    // Mailto fallback — no backend needed
+    const subject = encodeURIComponent(`AlgoTradeAI Contact: ${form.name}`)
+    const body    = encodeURIComponent(`Name: ${form.name}\nEmail: ${form.email}\n\n${form.message}`)
+    window.open(`mailto:contact@algotradeai.live?subject=${subject}&body=${body}`)
+    setStatus({ ok:true, msg:'✅ Your email client has opened. Send the email to reach us.' })
+    setBusy(false)
+  }
+
+  const inp = { background:C.cardBg,border:`1.5px solid ${C.border}`,borderRadius:12,padding:'12px 14px',color:C.text1,fontSize:14,width:'100%',fontFamily:"'DM Sans',sans-serif",boxSizing:'border-box' }
+  return (
+    <div style={{ position:'fixed',inset:0,zIndex:500,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center',padding:16 }} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
+      <div style={{ background:C.cardBg,borderRadius:18,maxWidth:480,width:'100%',padding:32,boxShadow:'0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20 }}>
+          <div style={{ fontSize:20,fontWeight:800,color:C.text1,fontFamily:"'Syne',sans-serif" }}>✉ Contact Us</div>
+          <button onClick={onClose} style={{ background:C.cardBg2,border:`1px solid ${C.border}`,color:C.text2,borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:14,fontWeight:600 }}>Close</button>
+        </div>
+        <p style={{ fontSize:13,color:C.text3,lineHeight:1.7,marginBottom:20 }}>Have a question, feedback, or business inquiry? We'd love to hear from you.</p>
+        <form onSubmit={submit}>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:13,fontWeight:600,color:C.text2,display:'block',marginBottom:6 }}>Name</label>
+            <input style={inp} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Your name" />
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:13,fontWeight:600,color:C.text2,display:'block',marginBottom:6 }}>Email</label>
+            <input type="email" style={inp} value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="your@email.com" />
+          </div>
+          <div style={{ marginBottom:16 }}>
+            <label style={{ fontSize:13,fontWeight:600,color:C.text2,display:'block',marginBottom:6 }}>Message</label>
+            <textarea rows={4} style={{...inp,resize:'vertical'}} value={form.message} onChange={e=>setForm(f=>({...f,message:e.target.value}))} placeholder="Tell us how we can help..." />
+          </div>
+          {status && (
+            <div style={{ padding:'11px 14px',borderRadius:10,background:status.ok?C.buyBg:C.sellBg,border:`1px solid ${status.ok?C.buyBorder:C.sellBorder}`,fontSize:13,color:status.ok?C.buy:C.sell,marginBottom:12 }}>
+              {status.msg}
+            </div>
+          )}
+          <button type="submit" disabled={busy} style={{ width:'100%',background:busy?C.border:C.brand,border:'none',color:busy?C.text3:'#fff',padding:'13px',borderRadius:12,cursor:busy?'default':'pointer',fontSize:15,fontWeight:700 }}>
+            {busy ? 'Opening...' : '📧 Send Message'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab,         setTab]         = useState('ANALYZE')
@@ -1008,14 +1493,28 @@ export default function App() {
   const [earningsData,    setEarningsData]    = useState(null)
   const [earningsLoading, setEarningsLoading] = useState(false)
   const [earningsError,   setEarningsError]   = useState(null)
+  const [featuredData,    setFeaturedData]    = useState(null)
+  const [featuredLoading, setFeaturedLoading] = useState(false)
+  const [featuredError,   setFeaturedError]   = useState(null)
+  const [mktNewsData,     setMktNewsData]     = useState(null)
+  const [mktNewsLoading,  setMktNewsLoading]  = useState(false)
+  const [mktNewsError,    setMktNewsError]    = useState(null)
+  const [recentSearches,  setRecentSearches]  = useState(() => lsGet('recent_searches',[]))
+  const [showDisclaimer,  setShowDisclaimer]  = useState(false)
+  const [showContact,     setShowContact]     = useState(false)
+  const [isNewUser,       setIsNewUser]       = useState(() => !lsGet('visited', false))
 
   useEffect(() => { const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t) },[])
 
-  // Load Markets data when tab switches to MARKETS
+  // Load data when tabs switch
   useEffect(() => {
     if (tab === 'MARKETS') {
-      if (!trendingData && !trendingLoading) loadTrending()
-      if (!earningsData && !earningsLoading) loadEarnings()
+      if (!trendingData  && !trendingLoading)  loadTrending()
+      if (!earningsData  && !earningsLoading)  loadEarnings()
+      if (!featuredData  && !featuredLoading)  loadFeatured()
+    }
+    if (tab === 'NEWS' && !sym) {
+      if (!mktNewsData && !mktNewsLoading) loadMarketNews()
     }
   }, [tab])
 
@@ -1041,11 +1540,32 @@ export default function App() {
 
   async function loadEarnings() {
     setEarningsLoading(true); setEarningsError(null)
-    try {
-      const d = await apiEarnings()
-      setEarningsData(d)
-    } catch(e) { setEarningsError(e.message) }
+    try { const d=await apiEarnings(); setEarningsData(d) } catch(e) { setEarningsError(e.message) }
     setEarningsLoading(false)
+  }
+
+  async function loadFeatured() {
+    setFeaturedLoading(true); setFeaturedError(null)
+    try {
+      const cached = sessionStorage.getItem('featured_cache')
+      if (cached) { const { data:d, ts } = JSON.parse(cached); if (Date.now()-ts < 30*60*1000) { setFeaturedData(d); setFeaturedLoading(false); return } }
+      const d = await apiFeatured()
+      setFeaturedData(d)
+      try { sessionStorage.setItem('featured_cache', JSON.stringify({ data:d, ts:Date.now() })) } catch {}
+    } catch(e) { setFeaturedError(e.message) }
+    setFeaturedLoading(false)
+  }
+
+  async function loadMarketNews() {
+    setMktNewsLoading(true); setMktNewsError(null)
+    try {
+      const cached = sessionStorage.getItem('mkt_news_cache')
+      if (cached) { const { data:d, ts } = JSON.parse(cached); if (Date.now()-ts < 15*60*1000) { setMktNewsData(d); setMktNewsLoading(false); return } }
+      const d = await apiMarketNews()
+      setMktNewsData(d)
+      try { sessionStorage.setItem('mkt_news_cache', JSON.stringify({ data:d, ts:Date.now() })) } catch {}
+    } catch(e) { setMktNewsError(e.message) }
+    setMktNewsLoading(false)
   }
 
   useEffect(() => {
@@ -1061,6 +1581,10 @@ export default function App() {
   function selectSym(s) {
     const v=s.toUpperCase().trim(); setSym(v); setResult(null); setError(null)
     if (tab!=='ANALYZE') setTab('ANALYZE')
+    if (v) {
+      const next = [v, ...recentSearches.filter(x=>x!==v)].slice(0,6)
+      setRecentSearches(next); lsSet('recent_searches', next)
+    }
   }
 
   async function analyze() {
@@ -1165,7 +1689,7 @@ export default function App() {
       </header>
 
       {/* ── CONTENT ── */}
-      <main style={{ maxWidth:1100,margin:'0 auto',padding:'20px 16px 110px' }} id="main-content">
+      <main style={{ maxWidth:1100,margin:'0 auto',padding:'20px 16px 80px' }} id="main-content">
 
         {/* ══════════ ANALYZE ══════════ */}
         {tab === 'ANALYZE' && (
@@ -1391,6 +1915,14 @@ export default function App() {
                   </Card>
                 </div>
 
+                {/* Why Buy / Why Not Buy / Final Insight */}
+                <WhyBuySection
+                  whyBuy={result.whyBuy}
+                  whyNotBuy={result.whyNotBuy}
+                  finalInsight={result.finalInsight}
+                  aiSummary={result.aiSummary}
+                />
+
                 {/* Quick nav */}
                 <div style={{ display:'flex',gap:10,flexWrap:'wrap' }}>
                   {[['📊 View Chart','CHART'],['📰 Read News','NEWS'],['⭐ Add to Watchlist','WATCHLIST'],['🔔 Email Alert','ALERTS']].map(([label,t])=>(
@@ -1429,6 +1961,26 @@ export default function App() {
             {/* ── SEO Hero / Empty State ── */}
             {!result && !loading && !error && !sym && (
               <div>
+                {isNewUser && (
+                  <OnboardingBanner onDismiss={()=>{ setIsNewUser(false); lsSet('visited',true) }} />
+                )}
+
+                {recentSearches.length > 0 && (
+                  <div style={{ marginBottom:16 }}>
+                    <div style={{ fontSize:12,color:C.text3,fontWeight:600,letterSpacing:'1px',textTransform:'uppercase',marginBottom:8 }}>Recent Searches</div>
+                    <div style={{ display:'flex',gap:6,flexWrap:'wrap' }}>
+                      {recentSearches.map(s=>(
+                        <button key={s} onClick={()=>selectSym(s)} style={{ background:C.cardBg,border:`1.5px solid ${C.border}`,color:C.text2,padding:'5px 14px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:600,transition:'all .15s',display:'flex',alignItems:'center',gap:5 }}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.brandLight;e.currentTarget.style.borderColor=C.brand;e.currentTarget.style.color=C.brand}}
+                          onMouseLeave={e=>{e.currentTarget.style.background=C.cardBg;e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.text2}}>
+                          🕐 {s}
+                        </button>
+                      ))}
+                      <button onClick={()=>{ setRecentSearches([]); lsSet('recent_searches',[]) }} style={{ background:'transparent',border:`1px solid ${C.border}`,color:C.text4,padding:'5px 10px',borderRadius:20,cursor:'pointer',fontSize:11 }}>Clear</button>
+                    </div>
+                  </div>
+                )}
+
                 {/* H1 — visible to Google, styled as hero */}
                 <Card style={{ textAlign:'center', padding:'48px 32px', marginBottom:16 }}>
                   <div style={{ fontSize:56, marginBottom:16 }}>📈</div>
@@ -1521,6 +2073,22 @@ export default function App() {
         {/* ══════════ MARKETS ══════════ */}
         {tab === 'MARKETS' && (
           <div style={{ animation:'fadeUp .3s ease' }}>
+
+            {/* Featured Stocks & ETFs */}
+            <Card style={{ marginBottom:20 }}>
+              <SectionTitle>⭐ Featured Stocks &amp; ETFs</SectionTitle>
+              <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                AI-curated selection across major sectors and popular ETF categories. Filter by sector and click <strong>Full Analysis ▸</strong> for a deep dive.
+              </div>
+              <FeaturedSection
+                data={featuredData}
+                loading={featuredLoading}
+                error={featuredError}
+                onAnalyze={s=>{ setSym(s); setTab('ANALYZE') }}
+                onRefresh={loadFeatured}
+              />
+            </Card>
+
             {/* Trending Stocks */}
             <Card style={{ marginBottom:20 }}>
               <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4,flexWrap:'wrap',gap:8 }}>
@@ -1590,11 +2158,27 @@ export default function App() {
         {tab === 'NEWS' && (
           <div style={{ animation:'fadeUp .3s ease' }}>
             <Card style={{ marginBottom:16 }}>
-              <SectionTitle>Latest News{sym?` · ${sym}`:''}</SectionTitle>
-              <div style={{ marginBottom:16 }}>
-                <SearchBox onSelect={s=>setSym(s.toUpperCase())} placeholder="Search stock for news..." />
+              <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4,flexWrap:'wrap',gap:8 }}>
+                <SectionTitle>{sym ? `📰 Company News · ${sym}` : '🌐 Global Market Intelligence'}</SectionTitle>
               </div>
-              <NewsFeed symbol={sym} />
+              {!sym && (
+                <div style={{ fontSize:13,color:C.text2,marginTop:-10,marginBottom:16,lineHeight:1.6 }}>
+                  Live global market news ranked by impact. Search for a specific company below to see company-specific news.
+                </div>
+              )}
+              <div style={{ marginBottom:16 }}>
+                <SearchBox onSelect={s=>{setSym(s.toUpperCase());}} placeholder="Search stock for company-specific news..." />
+              </div>
+              {sym ? (
+                <NewsFeed symbol={sym} />
+              ) : (
+                <GlobalNewsSection
+                  data={mktNewsData}
+                  loading={mktNewsLoading}
+                  error={mktNewsError}
+                  onRefresh={loadMarketNews}
+                />
+              )}
             </Card>
           </div>
         )}
@@ -1637,9 +2221,17 @@ export default function App() {
         ))}
       </nav>
 
-      <div style={{ textAlign:'center',padding:'0 16px 130px',fontSize:11,color:C.text4,letterSpacing:'0.5px' }}>
-        For educational purposes only · Not financial advice · All trading carries risk
+      {/* ── FOOTER (desktop only — sits above mobile nav on mobile) ── */}
+      <div style={{ paddingBottom:'env(safe-area-inset-bottom)' }}>
+        <Footer
+          onDisclaimer={()=>setShowDisclaimer(true)}
+          onContact={()=>setShowContact(true)}
+        />
       </div>
+
+      {/* ── MODALS ── */}
+      {showDisclaimer && <DisclaimerModal onClose={()=>setShowDisclaimer(false)} />}
+      {showContact    && <ContactModal    onClose={()=>setShowContact(false)}    />}
     </div>
   )
 }

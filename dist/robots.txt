@@ -1,0 +1,19 @@
+# AlgoTradeAI — https://www.algotradeai.live
+# Updated: March 2026
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+# Block common junk crawlers
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
+
+User-agent: MJ12bot
+Disallow: /
+
+# Sitemap location
+Sitemap: https://www.algotradeai.live/sitemap.xml

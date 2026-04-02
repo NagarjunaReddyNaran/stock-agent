@@ -60,7 +60,9 @@
     "api/news.js":     { "maxDuration": 10 },
     "api/search.js":   { "maxDuration": 10 },
     "api/trending.js": { "maxDuration": 30 },
-    "api/earnings.js": { "maxDuration": 15 }
+    "api/earnings.js":     { "maxDuration": 15 },
+    "api/market-news.js": { "maxDuration": 15 },
+    "api/featured.js":    { "maxDuration": 30 }
   },
   "redirects": [
     {
