@@ -117,8 +117,8 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured.' })
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' })
 
   const now = Date.now()
   if (cache && (now - cacheTime) < CACHE_TTL) {
@@ -127,11 +127,11 @@ export default async function handler(req, res) {
 
   try {
     const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || 'groq/compound',
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
         temperature: 0.3,
         max_tokens: 5000,
         messages: [
@@ -141,7 +141,7 @@ export default async function handler(req, res) {
       }),
     })
     const data = await r.json()
-    if (!r.ok) throw new Error(data?.error?.message || `Groq error ${r.status}`)
+    if (!r.ok) throw new Error(data?.error?.message || `Gemini error ${r.status}`)
 
     const txt   = data?.choices?.[0]?.message?.content || ''
     const clean = txt.replace(/```json/gi,'').replace(/```/g,'').trim()

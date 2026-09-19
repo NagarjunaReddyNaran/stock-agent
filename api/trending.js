@@ -40,14 +40,14 @@ Rules:
 - factors array should have 2-4 items from: Analyst Upgrade, Analyst Downgrade, Earnings Beat, Earnings Miss, Unusual Volume, Insider Buying, Insider Selling, Institutional Buying, M&A Activity, Government Contract, Macro Tailwind, Macro Headwind, Technical Breakout, Technical Breakdown, Options Activity, Price Target Raise, Price Target Cut
 - Return exactly 10 stocks, ranked 1-10 by overall trend strength`
 
-async function callGroq(apiKey) {
+async function callGemini(apiKey) {
   const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: process.env.GROQ_MODEL || 'groq/compound',
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
       temperature: 0.4,
       max_tokens: 3000,
       messages: [
@@ -57,7 +57,7 @@ async function callGroq(apiKey) {
     }),
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || `Groq error ${res.status}`)
+  if (!res.ok) throw new Error(data?.error?.message || `Gemini error ${res.status}`)
   return data?.choices?.[0]?.message?.content || ''
 }
 
@@ -70,8 +70,8 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' })
 
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured.' })
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' })
 
   // Serve from cache if fresh
   const now = Date.now()
@@ -80,7 +80,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const txt  = await callGroq(apiKey)
+    const txt  = await callGemini(apiKey)
     const clean = txt.replace(/```json/gi,'').replace(/```/g,'').trim()
     const match = clean.match(/\[[\s\S]*\]/)
     if (!match) throw new Error('No JSON array in response')
