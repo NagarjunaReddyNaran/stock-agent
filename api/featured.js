@@ -131,7 +131,7 @@ export default async function handler(req, res) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL || 'groq/compound',
         temperature: 0.3,
         max_tokens: 5000,
         messages: [

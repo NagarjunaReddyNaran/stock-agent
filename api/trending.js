@@ -47,7 +47,7 @@ async function callGroq(apiKey) {
     method: 'POST',
     headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model: process.env.GROQ_MODEL || 'groq/compound',
       temperature: 0.4,
       max_tokens: 3000,
       messages: [
