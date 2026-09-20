@@ -51,7 +51,7 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+        model: process.env.GEMINI_MODEL || 'models/gemini-3.5-flash-lite',
         temperature: 0.3,                    // Low temp = consistent JSON output
         max_tokens: 1500,
         messages: [
