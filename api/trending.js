@@ -47,7 +47,7 @@ async function callGemini(apiKey) {
     method: 'POST',
     headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       temperature: 0.4,
       max_tokens: 3000,
       messages: [

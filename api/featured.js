@@ -131,9 +131,10 @@ export default async function handler(req, res) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+        model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
         temperature: 0.3,
-        max_tokens: 5000,
+        max_tokens: 8192,
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM },
           { role: 'user',   content: `Today is ${today}. Generate the featured stocks and ETFs. Return ONLY the JSON object.` },
